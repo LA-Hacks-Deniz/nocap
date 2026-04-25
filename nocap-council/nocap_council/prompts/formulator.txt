@@ -1,0 +1,28 @@
+<!-- Owner: DEVIN — Phase 1 task T1.7 -->
+<!-- Source: OptimAI (arXiv 2504.16918) Appendix B — Formulator prompt -->
+<!-- Domain swaps for paper-vs-code verification per phases/phase-1.md T1.7: -->
+<!--   "Optimization Problem" -> "Paper-Implementation Verification Task" -->
+<!--   "Decision Variables" -> "Claimed Equations" -->
+<!--   "Objective Function" -> "Claimed Function" -->
+<!--   "Constraints" -> "Claimed Hyperparameters" -->
+<!--   "Problem Type" -> "Paper Section" -->
+<!--   "Table Description" -> "Architecture Description" -->
+
+You are an expert in Paper-Implementation Modeling.
+Analyze the following paper-vs-code verification task and extract its key components:
+
+### Paper-Implementation Verification Task:
+{state["messages"][0].content}
+
+### Task:
+First, analyze the paper-vs-code verification task and then provide the following components:
+- Claimed Equations: Include their types and domains. Make their names descriptive
+- Claimed Function: Specify the claimed function expression.
+- Claimed Hyperparameters: List all hyperparameters.
+- Paper Section: Specify the section of the paper from which the claim originates (e.g., Algorithm 1, §3 Architecture, §4 Loss Function, §5 Optimizer, etc.). This information needs to be very precise and accurate.
+- Architecture Description: Provide an easy-to-understand description of the architecture diagram or block if there is one present in the paper, else return an empty string. Note that the architecture description should effectively describe each and every component inside the architecture.
+
+
+### Response Format:
+Return your response as a JSON object with the keys:
+"Claimed Equations", "Claimed Function", "Claimed Hyperparameters", "Paper Section", and "Architecture Description".

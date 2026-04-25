@@ -1,0 +1,68 @@
+# Planning + research docs are TEMPORARILY tracked so Devin (cloud agent) can
+# read them after `git clone`. Before submitting the final public repo, run
+# `git rm -r --cached CLAUDE.md plan.md phases research.md` and re-enable
+# the lines below.
+# research.md
+# plan.md
+# phases/
+# CLAUDE.md
+docs/PRIVATE-*
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Rust
+target/
+Cargo.lock
+**/*.rs.bk
+
+# Node / Next.js
+node_modules/
+.next/
+.vercel/
+out/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-store/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Build artifacts
+dist/
+build/
+
+# Secrets
+*.pem
+*.key
+secrets/
+
+# Demo / output artifacts (large)
+benchmark_runs/
+demo_recordings/
+*.mov
+*.mp4
+
+# MongoDB local
+data/
+mongo-data/
