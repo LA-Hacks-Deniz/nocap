@@ -194,6 +194,14 @@ def _intent_anchor(claim: dict[str, Any], evidences: list[dict[str, Any]]) -> di
         if isinstance(target_var, str) and target_var in targets:
             aligned += 1
             continue
+        # T1.22: ``_return`` is the orchestrator's reparameterization-form
+        # fallback (paper writes ``x_t = ...``, code returns the value
+        # directly without naming it). The matcher compared the function's
+        # return expression against the claim's RHS, so this evidence IS
+        # aligned with the claim regardless of paper LHS naming.
+        if target_var == "_return":
+            aligned += 1
+            continue
         # Structural evidence: any mismatch whose location matches the claim
         mismatches = ev.get("mismatches") or ev.get("raw_matcher_output", {}).get("mismatches") or []
         if _filter_mismatches(mismatches, claim_section):
@@ -377,15 +385,24 @@ def verify(claim: dict[str, Any], evidences: list[dict[str, Any]]) -> dict[str, 
             "vigil_audit": audit,
         }
 
+    # T1.22: ``equivalent=None`` marks a synthetic no-signal evidence
+    # (the orchestrator skipped every claimed equation as non-comparable).
+    # Filter those out before voting; they contribute neither pass nor
+    # anomaly weight. If EVERY evidence is no-signal, the verdict is
+    # inconclusive (we couldn't actually compare the code to the paper).
+    voting = [ev for ev in evidences if ev.get("equivalent") is not None]
     if any(not a["pass"] for a in audit):
         verdict = _VERDICT_ANOMALY
         confidence = _CONF_HIGH
-    elif all(bool(ev.get("equivalent")) for ev in evidences):
+    elif not voting:
+        verdict = _VERDICT_INCONCLUSIVE
+        confidence = _CONF_MIN
+    elif all(bool(ev.get("equivalent")) for ev in voting):
         verdict = _VERDICT_PASS
         confidence = _CONF_HIGH
-    elif any(not bool(ev.get("equivalent")) for ev in evidences):
+    elif any(not bool(ev.get("equivalent")) for ev in voting):
         verdict = _VERDICT_ANOMALY
-        confidence = _confidence(evidences, _claim_paper_section(claim))
+        confidence = _confidence(voting, _claim_paper_section(claim))
     else:
         verdict = _VERDICT_INCONCLUSIVE
         confidence = _CONF_MIN
