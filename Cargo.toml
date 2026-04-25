@@ -1,0 +1,7 @@
+# Owner: CLAUDE — Phase 2 task T2.9 (workspace root)
+#
+# Cargo workspace so `cargo run -p nocap-gateway` works from the repo
+# root. nocap-mcp lands as a sibling member in a later phase task.
+[workspace]
+resolver = "2"
+members = ["nocap-gateway"]

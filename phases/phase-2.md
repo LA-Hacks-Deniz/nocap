@@ -101,7 +101,7 @@ Phase 2 ships when an engineer can `/nocap verify-impl <real-pr-url>` in Slack a
 
 ### T2.9 — `POST /verify-impl`
 
-- [ ] **@claude**
+- [x] **@claude**
 - **Deliverable**: `nocap-gateway/src/routes/verify.rs` accepting `{paper_arxiv_id, code, claim?}` body. Generates trace_id, writes init record to MongoDB, spawns Python orchestrator subprocess via `tokio::process::Command`, returns `{trace_id}`.
 - **Acceptance**: `curl -X POST -d '{"paper_arxiv_id":"1412.6980","code":"..."}' localhost:8787/verify-impl` returns `{"trace_id":"<uuid>"}` and the orchestrator process spawns.
 - **Files touched**: `nocap-gateway/src/routes/verify.rs`, `nocap-gateway/src/main.rs` (route mount).

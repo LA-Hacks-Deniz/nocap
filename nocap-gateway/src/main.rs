@@ -1,11 +1,14 @@
-// Owner: CLAUDE — Phase 2 task T2.8
+// Owner: CLAUDE — Phase 2 task T2.8 (T2.9 wires /verify-impl)
 //
-// Minimal Axum scaffold. T2.9 mounts POST /verify-impl, T2.10 mounts the
-// Slack endpoints, T2.15 fans out to Discord. For now: a single GET /health
-// route so cloudflared can probe the tunnel and acceptance can be verified
-// with `curl localhost:8787/health`.
+// Axum perimeter. T2.10 mounts the Slack endpoints, T2.15 fans out to
+// Discord. Routes live under `routes/`.
 
-use axum::{routing::get, Router};
+mod routes;
+
+use axum::{
+    routing::{get, post},
+    Router,
+};
 use tracing_subscriber::EnvFilter;
 
 const BIND_ADDR: &str = "0.0.0.0:8787";
@@ -20,7 +23,9 @@ async fn main() -> anyhow::Result<()> {
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
         .init();
 
-    let app = Router::new().route("/health", get(health));
+    let app = Router::new()
+        .route("/health", get(health))
+        .route("/verify-impl", post(routes::verify::verify_impl));
 
     let listener = tokio::net::TcpListener::bind(BIND_ADDR).await?;
     tracing::info!(addr = %BIND_ADDR, "nocap-gateway listening");
