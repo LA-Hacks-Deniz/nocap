@@ -31,17 +31,6 @@ const BULLETS = [
   "Accessible from inside the Slack with a single command, so the engineers will not need to adapt to a new dashboard.",
 ];
 
-const slackLines = [
-  "@deniz /nocap verify-impl 1412.6980 ./adam.py",
-  "",
-  "🔴 No Cap — Anomaly detected (confidence 0.95)",
-  "  Paper Algorithm 1, equation 3:",
-  "      m̂_t = m_t / (1 - β₁ᵗ)",
-  "  Code line 23:",
-  "      m_hat = self.m",
-  "  Residual: m·β₁ᵗ / (1 - β₁ᵗ)   (bias correction missing)",
-];
-
 function FadeIn({
   children,
   className,
@@ -72,17 +61,7 @@ function FadeIn({
 function Wordmark() {
   return (
     <span className="inline-flex items-end justify-center tracking-[-0.065em]">
-      <span>NoCa</span>
-      <span className="relative inline-block">
-        <span>p</span>
-        <span
-          aria-hidden="true"
-          className="pointer-events-none absolute -top-[0.48em] -left-[0.02em] rotate-[-8deg] text-[0.72em]"
-        >
-          🧢
-        </span>
-      </span>
-      <span>.wiki</span>
+      <span>NoCap.wiki</span>
     </span>
   );
 }
@@ -192,13 +171,86 @@ export function LandingPage() {
             </div>
 
             <FadeIn className="lg:sticky lg:top-28" delay={0.2}>
-              <div className="rounded-[2rem] border border-border bg-[#1a1a1a] p-6 text-left text-sm text-[#FAFAFA] shadow-[0_18px_60px_rgba(26,26,26,0.16)] sm:p-8">
-                <p className="mb-5 text-xs uppercase tracking-[0.28em] text-[#9CA3AF]">
-                  Slack mockup
-                </p>
-                <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-sm leading-7">
-                  {slackLines.join("\n")}
-                </pre>
+              <div className="overflow-hidden rounded-[2rem] border border-border bg-[#1a1a1a] text-left text-sm text-[#FAFAFA] shadow-[0_18px_60px_rgba(26,26,26,0.16)]">
+                <div className="flex items-center justify-between border-b border-[#2a2a2a] px-5 py-4 sm:px-6">
+                  <div>
+                    <p className="text-sm font-bold"># nocap-verifications</p>
+                    <p className="mt-1 text-xs text-[#9CA3AF]">
+                      No Cap app · research implementation checks
+                    </p>
+                  </div>
+                  <span className="rounded-full border border-[#3a3a3a] px-2 py-1 text-xs text-[#9CA3AF]">
+                    Slack
+                  </span>
+                </div>
+                <div className="space-y-5 p-5 sm:p-6">
+                  <div className="flex gap-3">
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#FAFAFA] text-lg">
+                      🧢
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm">
+                        <span className="font-bold">Deniz</span>
+                        <span className="ml-2 text-xs text-[#9CA3AF]">
+                          10:42 AM
+                        </span>
+                      </p>
+                      <p className="mt-2 rounded-xl bg-[#242424] px-3 py-2 font-mono text-xs leading-6 text-[#FAFAFA]">
+                        /nocap verify-impl 1412.6980 ./adam.py
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex gap-3">
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[#3a3a3a] text-lg">
+                      🧢
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm">
+                        <span className="font-bold">No Cap</span>
+                        <span className="ml-2 rounded bg-[#2f2f2f] px-1.5 py-0.5 text-[10px] uppercase tracking-[0.16em] text-[#D1D5DB]">
+                          app
+                        </span>
+                      </p>
+                      <div className="mt-3 rounded-2xl border border-[#3a3a3a] bg-[#202020] p-4">
+                        <p className="font-bold">
+                          🔴 Anomaly detected{" "}
+                          <span className="font-normal text-[#D1D5DB]">
+                            confidence 0.95
+                          </span>
+                        </p>
+                        <dl className="mt-4 grid gap-3 text-xs leading-6 text-[#D1D5DB]">
+                          <div>
+                            <dt className="font-bold uppercase tracking-[0.16em] text-[#9CA3AF]">
+                              Paper Algorithm 1, equation 3
+                            </dt>
+                            <dd className="mt-1 font-mono text-[#FAFAFA]">
+                              m̂_t = m_t / (1 - β₁ᵗ)
+                            </dd>
+                          </div>
+                          <div>
+                            <dt className="font-bold uppercase tracking-[0.16em] text-[#9CA3AF]">
+                              Code line 23
+                            </dt>
+                            <dd className="mt-1 font-mono text-[#FAFAFA]">
+                              m_hat = self.m
+                            </dd>
+                          </div>
+                          <div>
+                            <dt className="font-bold uppercase tracking-[0.16em] text-[#9CA3AF]">
+                              Residual
+                            </dt>
+                            <dd className="mt-1 font-mono text-[#FAFAFA]">
+                              m·β₁ᵗ / (1 - β₁ᵗ)
+                            </dd>
+                            <dd className="mt-1 text-[#D1D5DB]">
+                              bias correction missing
+                            </dd>
+                          </div>
+                        </dl>
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
             </FadeIn>
           </div>
