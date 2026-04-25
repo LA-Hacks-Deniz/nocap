@@ -258,11 +258,18 @@ def _is_self_referential(equation: str, target_var: str | None) -> bool:
     the post-assignment value), the matcher cannot distinguish them and
     will always report a non-zero residual. We mark these "skip" so the
     orchestrator's iterate-keep-worst loop ignores them.
+
+    Implementation note: a plain ``\\b{target}\\b`` regex doesn't work
+    here because ``_`` is a word char, so ``\\bm\\b`` fails to match
+    ``m_{t-1}`` (no boundary between ``m`` and ``_``). We use explicit
+    lookbehind / lookahead that allows trailing ``_`` (subscript) but
+    rejects trailing alpha / digit (so ``m`` doesn't match ``mass``
+    or ``model``).
     """
     if not target_var or "=" not in equation:
         return False
     rhs = equation.split("=", 1)[1]
-    pattern = rf"\b{re.escape(target_var)}\b"
+    pattern = rf"(?<![a-zA-Z0-9_]){re.escape(target_var)}(?![a-zA-Z0-9])"
     return re.search(pattern, rhs) is not None
 
 
