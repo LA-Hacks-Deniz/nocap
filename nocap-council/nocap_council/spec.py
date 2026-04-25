@@ -1,4 +1,4 @@
-# Owner: CLAUDE — Phase 1 task T1.8 (refactored under T1.21 — DEVIN)
+# Owner: CLAUDE — Phase 1 task T1.8 (refactored under T1.21 + T1.22 — DEVIN)
 """Formulator role — extract the verification claim from a paper URL + code.
 
 Wraps `prompts/formulator.txt` (OptimAI Appendix B Formulator with paper-vs-code
@@ -15,6 +15,17 @@ and parsed defensively. On `ValidationError`, a warning is logged to stderr
 and an empty-defaults Claim is returned; the Formulator never raises so the
 orchestrator's `inconclusive` path stays the only failure mode the gateway
 sees.
+
+T1.22 added function-awareness: when `function_name` and `function_source` are
+provided, the prompt names the function under verification and asks Gemma to
+extract the equation(s) THAT function claims to implement (not random paper
+equations). The JSON instruction also asks Spec to rewrite Gaussian
+distribution-form equations (`q(x_t | x_0) = N(...)`) into reparameterization
+assignment form so the downstream matcher gets an LHS to compare against.
+Without function-awareness, Spec is paper-blind to which function the user
+asked to verify — for DDPM with `--function q_sample`, Spec picks §3.2
+(Training Objective) and extracts L_simple, but L_simple lives in
+`loss_simple`, not `q_sample`.
 
 The Formulator's job is to pin the claim to a specific paper section so the
 downstream council roles (Planner, Coder, Polygraph) can target the right
@@ -47,6 +58,51 @@ class Claim(BaseModel):
     claimed_function: str = Field(description="The claimed function expression — what the implemented function computes.")
     claimed_hyperparams: list[HyperParam] = Field(default_factory=list, description="Hyperparameters declared in the paper.")
     architecture_description: str = Field(default="", description="Description of any architecture diagram present, else empty.")
+
+
+_FUNCTION_AWARE_INSTRUCTION = """
+
+### Function under verification (REQUIRED — overrides paper-section heuristic)
+The user has asked you to verify ONE specific function: `{function_name}`.
+Its source (decorators, signature, body, docstring) is:
+
+```python
+{function_source}
+```
+
+You MUST extract the paper equation(s) THIS function claims to implement.
+Reason: the function's LHS-assigned variables (and its return expression) map
+to the paper's LHS symbols. Pick the paper section that DEFINES this
+function's math, NOT a related section that happens to share notation.
+
+Procedure:
+1. Read the function's docstring + body. Identify the LHS variables it
+   assigns (and what it returns).
+2. Find the paper section / equation whose LHS matches those variables.
+3. Set `paper_section` to THAT section (not the loss / training / sampling
+   section unless the function genuinely IS the loss / training / sampler).
+4. Set `claimed_equations` to ONLY the equations from that section the
+   function implements. Drop equations from sibling sections.
+
+Distribution-form rewrite (REQUIRED for Gaussian densities). When the paper
+writes a forward / posterior / prior as a Gaussian density
+`q(...) = N(mean, variance I)`, you MUST rewrite it as the corresponding
+reparameterization assignment so the downstream matcher has an LHS to compare
+against. The matcher only handles assignments; it cannot match
+`q(x) = N(\\mu, \\sigma^2 I)` against `x = \\mu + \\sigma \\epsilon`.
+  - Generic form:
+    `q(x | y) = N(x; \\mu(y), \\Sigma(y) I)`
+    rewrites to
+    `x = \\mu(y) + \\sqrt{{\\Sigma(y)}} \\epsilon`,  `\\epsilon \\sim N(0, I)`.
+  - DDPM eq 4 (canonical case):
+    `q(x_t | x_0) = N(x_t; \\sqrt{{\\bar{{\\alpha}}_t}} x_0, (1 - \\bar{{\\alpha}}_t) I)`
+    rewrites to
+    `x_t = \\sqrt{{\\bar{{\\alpha}}_t}} x_0 + \\sqrt{{1 - \\bar{{\\alpha}}_t}} \\epsilon`,
+    `\\epsilon \\sim N(0, I)`.
+Limitation: only Gaussian densities are auto-rewritten. Bernoulli /
+Categorical / discrete densities are out of scope for v1. If the function's
+equation is already an assignment (not a density), leave it as-is.
+"""
 
 
 _JSON_INSTRUCTION = """
@@ -144,7 +200,7 @@ def _empty_claim() -> Claim:
 # `\n` / `\r` / `\t` / `\b` / `\f` characters Gemma might emit in
 # description fields, which is acceptable: those fields contain prose
 # describing diagrams, not control bytes.
-_INVALID_BACKSLASH_RE = re.compile(r'\\(?![\\/"u])')
+_INVALID_BACKSLASH_RE = re.compile(r'(?<!\\)\\(?![\\/"u])')
 
 
 def _repair_latex_escapes(text: str) -> str:
@@ -168,13 +224,37 @@ def _load_prompt() -> str:
     return "\n".join(lines).lstrip()
 
 
-def _format_task_content(paper_url: str, code_str: str, user_msg: str | None) -> str:
+def _format_task_content(
+    paper_url: str,
+    code_str: str,
+    user_msg: str | None,
+    *,
+    function_source: str | None = None,
+) -> str:
+    """Build the per-call task block.
+
+    When ``function_source`` is set (T1.22 function-aware path), we show ONLY
+    the function's source as the "Code under verification" body — the rest
+    of the class is hidden so the extraction stays focused on the equation
+    THIS function implements, and so we stay under Gemma's 15 k input-token
+    per-minute free-tier window on large fixtures (DDPM's full class is
+    ~600 lines / ~5-8 k tokens; the function alone is ~30 lines / ~500 tokens).
+    """
+    if function_source:
+        code_block = function_source.rstrip()
+        body_label = (
+            "Code under verification (function under --function override; "
+            "rest of the class is hidden to focus the extraction):"
+        )
+    else:
+        code_block = code_str.strip()
+        body_label = "Code under verification:"
     parts = [
         f"Paper URL: {paper_url}",
         "",
-        "Code under verification:",
+        body_label,
         "```python",
-        code_str.strip(),
+        code_block,
         "```",
     ]
     if user_msg:
@@ -182,7 +262,14 @@ def _format_task_content(paper_url: str, code_str: str, user_msg: str | None) ->
     return "\n".join(parts)
 
 
-def extract_claim(paper_url: str, code_str: str, user_msg: str | None = None) -> dict:
+def extract_claim(
+    paper_url: str,
+    code_str: str,
+    user_msg: str | None = None,
+    *,
+    function_name: str | None = None,
+    function_source: str | None = None,
+) -> dict:
     """Run the Formulator on a paper URL + Python code, return the structured claim.
 
     Returns a dict with keys: paper_section, claimed_equations, claimed_function,
@@ -190,16 +277,44 @@ def extract_claim(paper_url: str, code_str: str, user_msg: str | None = None) ->
     the JSON shape is pinned via the prompt's `_JSON_INSTRUCTION` block (Gemma
     does not enforce `response_schema`). Validation failures degrade to an
     empty-defaults Claim with a warning logged to stderr.
+
+    When ``function_name`` and ``function_source`` are provided (T1.22), the
+    prompt names the function under verification and asks Gemma to extract
+    the equation(s) THAT function claims to implement. Without these args,
+    Spec falls back to its T1.21 paper-blind behavior (back-compat for
+    callers that don't pass ``--function``).
     """
     template = _load_prompt()
-    task_content = _format_task_content(paper_url, code_str, user_msg)
-    prompt = template.replace(_TASK_PLACEHOLDER, task_content) + _JSON_INSTRUCTION
+    task_content = _format_task_content(
+        paper_url, code_str, user_msg, function_source=function_source
+    )
+    function_block = ""
+    if function_name and function_source:
+        function_block = _FUNCTION_AWARE_INSTRUCTION.format(
+            function_name=function_name,
+            function_source=function_source.rstrip(),
+        )
+    prompt = template.replace(_TASK_PLACEHOLDER, task_content) + function_block + _JSON_INSTRUCTION
+    # T1.22 token-budget log: rough char-to-token ratio is ~4 for English / Python
+    # source; this is a sanity check, not a hard cap. If we ever see this above
+    # ~10k for a function-aware call, the trim isn't doing its job.
+    print(
+        f"[spec] prompt_chars={len(prompt)} est_tokens={len(prompt) // 4} "
+        f"function_aware={bool(function_name and function_source)}",
+        file=sys.stderr,
+    )
     raw_text = client.call(
         model="gemma-3-27b-it",
         system="",
         user=prompt,
         json_schema={"type": "object"},
     )
+    # T1.22: ``_repair_latex_escapes`` doubles single-backslash LaTeX
+    # escapes (``\beta``) so ``json.loads`` accepts them as ``\\beta``.
+    # The negative-lookbehind in the regex skips already-doubled pairs
+    # (``\\epsilon``), which Gemma sometimes emits — without that, the
+    # repair would corrupt valid JSON. Defensive parse: validation
+    # errors degrade to an empty-defaults Claim with a warning.
     repaired = _repair_latex_escapes(raw_text)
     try:
         raw = json.loads(repaired)

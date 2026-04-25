@@ -1,4 +1,4 @@
-# Owner: DEVIN — Phase 1 task T1.13
+# Owner: DEVIN — Phase 1 task T1.13 (function-aware Spec + skip-retry under T1.22)
 """Orchestrator — single-arm OptimAI loop tying the council together.
 
 End-to-end verification pipeline that consumes ``(paper_arxiv_id, code_str)``
@@ -11,9 +11,11 @@ and returns a verdict dict by chaining:
                                                 polygraph
 
 Per-stage events stream to stdout as line-delimited JSON
-(``{"stage": str, "status": "ok"|"error", "ms": int, "info": ...}``) so
-the CLI (T1.14) can render live progress and the gateway (Phase 2) can
-ingest the same trace.
+(``{"stage": str, "status": "ok"|"error"|"skipped", "ms": int, "info": ...}``)
+so the CLI (T1.14) can render live progress and the gateway (Phase 2) can
+ingest the same trace. ``status="skipped"`` (T1.22) is emitted when a
+symbolic / numerical strategy has no comparable equation in ``code_env`` —
+the matcher never ran, so the strategy contributes no signal either way.
 
 Public API
 ----------
@@ -48,6 +50,14 @@ the strategy's reported evidence is the **first inequivalent** result, or
 the last result if all are equivalent. So a strategy passes only if EVERY
 claimed equation passes (Adam-buggy needs both ``m_hat`` and ``v_hat``
 caught — single-equation runs would miss one).
+
+T1.22 added skip-retry: equations whose ``target_var`` isn't in ``code_env``
+(or whose matcher returns ``not found``) are treated as non-comparable and
+skipped. The strategy's evidence carries a ``skipped_equations`` list of
+``(index, target)`` tuples; if every equation skips, the strategy returns
+a synthetic ``equivalent=None, method_used="failed"`` evidence and the
+JSONL stream emits ``status="skipped"`` so polygraph treats it as no signal
+(neither pass nor anomaly contribution).
 
 ``var_map`` and ``target_var`` are derived heuristically from each
 equation's LaTeX (LHS accent flattening, greek letter mapping, ``_t``
@@ -129,6 +139,31 @@ def _stage(
 # ----------------------------------------------------------------------
 # Function-name resolution
 # ----------------------------------------------------------------------
+
+
+def _extract_function_source(code_str: str, function_name: str) -> str | None:
+    """Return the unparsed source of ``function_name`` (decorators + docstring).
+
+    Used by the spec stage when the user passed ``--function``: the source
+    becomes part of the prompt so Gemma can extract paper equations the
+    function ACTUALLY claims to implement (T1.22).
+
+    ``ast.unparse`` regenerates the def block in canonical form; we keep
+    decorators (``@torch.no_grad()`` carries semantic signal: inference vs
+    training path) and the docstring (the function's own claim). Returns
+    ``None`` if the name doesn't resolve to a function in ``code_str``.
+    """
+    try:
+        tree = ast.parse(code_str)
+    except SyntaxError:
+        return None
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == function_name:
+            try:
+                return ast.unparse(node)
+            except (AttributeError, ValueError):
+                return None
+    return None
 
 
 def _resolve_function_name(
@@ -302,6 +337,17 @@ def _heuristic_target_var(equation: str, code_env: dict[str, Any]) -> str | None
     trimmed = re.sub(r"_t\b$", "", cand)
     if trimmed and trimmed in code_env:
         return trimmed
+    # T1.22: reparameterization-form fallback. When the paper equation
+    # assigns to a symbol the code never names directly (``x_t = ...``)
+    # but the function returns the corresponding expression
+    # (``def q_sample(...): return sqrt_bar * x_0 + ...``), use the
+    # synthetic ``_return`` key so the matcher compares paper RHS against
+    # the function's return expression. Only kicks in when neither the
+    # full nor timestep-trimmed name appears in the env at all (so Adam's
+    # ``\theta_t`` still resolves to ``theta`` etc.).
+    all_syms = _all_symbols(code_env)
+    if cand not in all_syms and (not trimmed or trimmed not in all_syms) and "_return" in code_env:
+        return "_return"
     # Last resort: return the mangled name; matchers will surface a KeyError.
     return cand
 
@@ -391,6 +437,29 @@ def _heuristic_var_map(equation: str, code_env: dict[str, Any]) -> dict[str, str
 # ----------------------------------------------------------------------
 
 
+def _synthetic_skipped_evidence(
+    kind: str, skipped: list[tuple[int, str]]
+) -> dict[str, Any]:
+    """Build a no-signal evidence dict when every equation was skipped.
+
+    Polygraph treats ``equivalent=None`` as "skipped" (T1.22) — the
+    strategy contributes no vote either direction.
+    """
+    return {
+        "kind": kind,
+        "equivalent": None,
+        "residual": None,
+        "mismatches": None,
+        "method_used": "failed",
+        "target_var": None,
+        "raw_matcher_output": {},
+        "error": "no comparable equation found in code_env",
+        "critic_feedback": None,
+        "critic_score": None,
+        "skipped_equations": skipped,
+    }
+
+
 def _strategy_evidence(
     strategy: Strategy,
     paper: dict[str, Any],
@@ -401,6 +470,10 @@ def _strategy_evidence(
 
     Strategy passes only if EVERY equation passes; we return the first
     inequivalent evidence (most actionable) or the last equivalent one.
+    Equations whose ``target_var`` isn't in ``code_env`` (or whose matcher
+    returns ``not found``) are skipped (T1.22) — they contribute no signal.
+    When every equation skips, return a synthetic ``equivalent=None``
+    evidence so polygraph can treat the strategy as no-vote.
     """
     kind = strategy.kind
     equations = claim.get("claimed_equations") or []
@@ -414,8 +487,10 @@ def _strategy_evidence(
                 var_map=None,
                 target_var=None,
             )
+        env_symbols = _all_symbols(code_env)
+        skipped: list[tuple[int, str]] = []
         last_ev: dict[str, Any] | None = None
-        for raw_eq in equations:
+        for i, raw_eq in enumerate(equations):
             eq = _normalize_equation(raw_eq)
             target = _heuristic_target_var(eq, code_env)
             if _is_self_referential(eq, target):
@@ -423,6 +498,11 @@ def _strategy_evidence(
                 # temporal indexing for ``code_env`` so the matcher can't
                 # distinguish ``\theta_{t-1}`` from ``\theta_t``. Skip
                 # rather than report a spurious residual.
+                continue
+            if not target or (target not in env_symbols and target not in code_env):
+                # Target variable absent from the function's env — not
+                # a comparable equation. Record + move on (T1.22).
+                skipped.append((i, target or ""))
                 continue
             var_map = _heuristic_var_map(eq, code_env)
             ev = coder.run_strategy(
@@ -433,26 +513,23 @@ def _strategy_evidence(
                 var_map=var_map,
                 target_var=target,
             )
+            err = ev.get("error") or ""
+            if isinstance(err, str) and "not found" in err.lower():
+                # Matcher-side symbol miss (e.g. var_map references a
+                # paper symbol that doesn't appear anywhere in code_env).
+                skipped.append((i, target))
+                continue
             if not ev.get("equivalent", True):
+                ev["skipped_equations"] = skipped
                 return ev
             last_ev = ev
-        if last_ev is None:
-            # Every equation was self-referential — fall back to the
-            # last one verbatim so the matcher still emits a real
-            # evidence dict (with whatever residual it computes).
-            raw_eq = equations[-1]
-            eq = _normalize_equation(raw_eq)
-            target = _heuristic_target_var(eq, code_env)
-            var_map = _heuristic_var_map(eq, code_env)
-            return coder.run_strategy(
-                strategy,
-                paper,
-                code_env,
-                claim_equation=eq,
-                var_map=var_map,
-                target_var=target,
-            )
-        return last_ev
+        if last_ev is not None:
+            last_ev["skipped_equations"] = skipped
+            return last_ev
+        # Every equation was self-referential or skipped — no real
+        # comparison happened. Return a synthetic no-signal evidence
+        # so polygraph can ignore this strategy.
+        return _synthetic_skipped_evidence(kind, skipped)
     # structural / hyperparametric: single matcher call. The
     # ``claim_section`` kwarg makes ``code.run_strategy`` drop
     # cross-section mismatches before the Critic fires, so AdaMax-style
@@ -530,10 +607,22 @@ def verify(
         },
     )
 
-    # Stage 2: spec
+    # Stage 2: spec.
+    # T1.22: when ``--function`` is given, ast-extract the function source
+    # and pass it to Spec so Gemma extracts the equations THAT function
+    # implements (not random paper equations from the wrong section).
+    function_source: str | None = None
+    if function_name:
+        function_source = _extract_function_source(code_str, function_name)
     s0 = time.perf_counter()
     try:
-        claim = spec.extract_claim(paper_arxiv_id, code_str, user_msg)
+        claim = spec.extract_claim(
+            paper_arxiv_id,
+            code_str,
+            user_msg,
+            function_name=function_name if function_source else None,
+            function_source=function_source,
+        )
     except Exception as exc:
         ms = int((time.perf_counter() - s0) * 1000)
         tb = traceback.format_exc()
@@ -659,17 +748,26 @@ def verify(
             continue
         ms = int((time.perf_counter() - s0) * 1000)
         evidences.append(ev)
+        # T1.22: ``equivalent=None`` signals a synthetic no-signal
+        # evidence (every equation skipped). Surface as ``status="skipped"``
+        # so the CLI / gateway / polygraph can distinguish from ``ok``.
+        skipped_eqs = ev.get("skipped_equations") or []
+        if ev.get("equivalent") is None:
+            stage_status = "skipped"
+        else:
+            stage_status = "ok"
         _stage(
             stream,
             "code",
-            "ok",
+            stage_status,
             ms,
             strategy_idx=i,
             info={
                 "kind": strategy.kind,
-                "equivalent": bool(ev.get("equivalent")),
+                "equivalent": ev.get("equivalent"),
                 "residual_short": _short_residual(ev.get("residual")),
                 "n_mismatches": len(ev.get("mismatches") or []),
+                "n_skipped": len(skipped_eqs),
                 "method_used": ev.get("method_used"),
                 "target_var": ev.get("target_var"),
                 "critic_score": ev.get("critic_score"),

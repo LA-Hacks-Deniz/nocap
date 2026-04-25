@@ -1,4 +1,4 @@
-# Owner: DEVIN — Phase 1 task T1.14
+# Owner: DEVIN — Phase 1 task T1.14 (skipped-status rendering under T1.22)
 """CLI — pretty-printed wrapper around ``orchestrator.verify``.
 
 Public command (registered as the ``nocap`` console script via
@@ -169,10 +169,16 @@ def _stage_status_line(event: dict[str, Any]) -> Text:
     if stage == "code" and "strategy_idx" in event:
         suffix_parts.append(f"strategy_idx={event['strategy_idx']}")
         suffix_parts.append(f"kind={info.get('kind')}")
-        if status == "ok":
+        if status == "skipped":
+            suffix_parts.append("(skipped — no comparable equation)")
+            if info.get("n_skipped"):
+                suffix_parts.append(f"n_skipped={info.get('n_skipped')}")
+        elif status == "ok":
             suffix_parts.append(f"equivalent={info.get('equivalent')}")
             if info.get("residual_short"):
                 suffix_parts.append(f"residual={info.get('residual_short')}")
+            if info.get("n_skipped"):
+                suffix_parts.append(f"n_skipped={info.get('n_skipped')}")
             if info.get("critic_score") is not None:
                 suffix_parts.append(f"critic_score={info.get('critic_score')}")
         else:
@@ -194,8 +200,13 @@ def _stage_status_line(event: dict[str, Any]) -> Text:
 
     suffix = "  " + "  ".join(suffix_parts) if suffix_parts else ""
     ms_str = f"{ms / 1000:>6.2f}s" if isinstance(ms, int | float) else "  --  "
-    style = "dim" if status == "ok" else "yellow"
-    return Text(f"  [{stage:<14}] {status:<5} {ms_str}{suffix}", style=style)
+    if status == "ok":
+        style = "dim"
+    elif status == "skipped":
+        style = "dim italic"
+    else:
+        style = "yellow"
+    return Text(f"  [{stage:<14}] {status:<7} {ms_str}{suffix}", style=style)
 
 
 def _render_pass(console: Console, verdict: dict[str, Any]) -> None:
@@ -231,6 +242,10 @@ def _render_anomaly(
     rendered_any = False
     for ev in verdict.get("evidences") or []:
         if ev.get("equivalent"):
+            continue
+        # T1.22: ``equivalent=None`` marks a no-signal (skipped) evidence;
+        # don't render it as an anomaly panel.
+        if ev.get("equivalent") is None:
             continue
         rendered_any = True
         kind = ev.get("kind", "?")
@@ -334,8 +349,12 @@ def _render_timing_table(console: Console, events: list[dict[str, Any]]) -> None
         if stage == "code" and "strategy_idx" in e:
             stage = f"code[{e['strategy_idx']}:{info.get('kind', '?')}]"
             detail_bits = []
-            if "equivalent" in info:
+            if status == "skipped":
+                detail_bits.append("(skipped)")
+            if "equivalent" in info and info.get("equivalent") is not None:
                 detail_bits.append(f"equivalent={info['equivalent']}")
+            if info.get("n_skipped"):
+                detail_bits.append(f"n_skipped={info['n_skipped']}")
             if info.get("critic_score") is not None:
                 detail_bits.append(f"critic_score={info['critic_score']}")
             detail = "  ".join(detail_bits)
@@ -347,7 +366,12 @@ def _render_timing_table(console: Console, events: list[dict[str, Any]]) -> None
             detail = f"verdict={info.get('verdict')}"
         else:
             detail = ""
-        status_style = "green" if status == "ok" else "yellow"
+        if status == "ok":
+            status_style = "green"
+        elif status == "skipped":
+            status_style = "dim italic"
+        else:
+            status_style = "yellow"
         table.add_row(stage, f"[{status_style}]{status}[/{status_style}]", f"{ms}", detail)
     table.add_row("[bold]total[/bold]", "", f"[bold]{total_ms}[/bold]", "", end_section=True)
     console.print(table)

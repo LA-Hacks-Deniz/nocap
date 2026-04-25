@@ -2,8 +2,8 @@
 
 Variant of Claude-Code-generated DDPM implementation
 (clean: as-shipped | buggy: planted bias-correction omission in q_sample's mean).
-This file is the BUGGY variant — `q_sample` uses `self.bar_alphas` where eq. (4)
-calls for `self.sqrt_bar_alphas` in the mean.
+This file is the CLEAN variant — `q_sample` uses `self.sqrt_bar_alphas` per eq. (4),
+matching the as-shipped Claude Code implementation.
 
 Implements:
   * Forward process  q(x_t | x_0)              — eq. (4)
@@ -72,7 +72,7 @@ class GaussianDiffusion:
         """Sample x_t ~ q(x_t | x_0) using the reparameterization in eq. (4)."""
         if noise is None:
             noise = torch.randn_like(x0)
-        sqrt_bar = _gather(self.bar_alphas, t, x0.shape)
+        sqrt_bar = _gather(self.sqrt_bar_alphas, t, x0.shape)
         sqrt_one_minus_bar = _gather(self.sqrt_one_minus_bar_alphas, t, x0.shape)
         return sqrt_bar * x0 + sqrt_one_minus_bar * noise
 
