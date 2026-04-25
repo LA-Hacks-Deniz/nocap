@@ -177,8 +177,8 @@ When a phase is done, the phase doc updates this table.
 | `nocap-council/plan.py` | Claude | Phase 1 |
 | `nocap-council/code.py` | Devin | Phase 1 |
 | `nocap-council/polygraph.py` | Devin | Phase 1 |
-| `nocap-council/orchestrator.py` | Claude | Phase 1 |
-| `nocap-council/cli.py` | Claude | Phase 1 |
+| `nocap-council/orchestrator.py` | Devin | Phase 1 |
+| `nocap-council/cli.py` | Devin | Phase 1 |
 | `nocap-council/prompts/*.txt` | Devin | Phase 1 |
 | `nocap-council/mongo_log.py` | Claude | Phase 2 |
 | `nocap-council/github_fetch.py` | Claude | Phase 2 |

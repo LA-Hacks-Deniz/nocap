@@ -208,7 +208,7 @@ That output proves the entire council works. No Slack, no frontend, no MCP — j
 
 ### T1.13 — `orchestrator.py`
 
-- [ ] **@claude**
+- [ ] **@devin**
 - **Deliverable**: `nocap_council/orchestrator.py` with `verify(paper_arxiv_id, code_str, user_msg=None) -> verdict_dict`. Top-level loop: `paper_extract → spec → plan → for strategy in plans: code → polygraph(evidence)`. Streams events to stdout as line-delimited JSON.
 - **Acceptance**: end-to-end run on Adam clean returns `verdict='Pass'`, on Adam buggy returns `verdict='Anomaly'`. Each call < 30s wall clock with Gemma 4.
 - **Files touched**: `nocap-council/nocap_council/orchestrator.py`.
@@ -217,7 +217,7 @@ That output proves the entire council works. No Slack, no frontend, no MCP — j
 
 ### T1.14 — `cli.py` (Click app)
 
-- [ ] **@claude**
+- [ ] **@devin**
 - **Deliverable**: `nocap_council/cli.py` with Click command `nocap verify-impl <arxiv-id> <code-file> [--claim TEXT]`. Pretty-prints verdict with colors (use `rich`). Wires up to `nocap-council/pyproject.toml` as `[project.scripts] nocap = "nocap_council.cli:cli"` so `pip install -e .` exposes the `nocap` command.
 - **Acceptance**: `nocap verify-impl 1412.6980 ./adam_buggy.py` prints the verdict shown in this file's "Goal" section.
 - **Files touched**: `nocap-council/nocap_council/cli.py`, `nocap-council/pyproject.toml`.
@@ -240,7 +240,7 @@ That output proves the entire council works. No Slack, no frontend, no MCP — j
 
 ### T1.16 — Smoke test on Adam fixtures
 
-- [ ] **@claude**
+- [ ] **@devin**
 - **Deliverable**: a `Makefile` target `make smoke-adam` that runs `nocap verify-impl 1412.6980 benchmark/implementations/adam_clean.py` and `... adam_buggy.py` and asserts the verdicts.
 - **Acceptance**: `make smoke-adam` exits 0 on both and prints the pretty verdicts.
 - **Files touched**: `Makefile`.
