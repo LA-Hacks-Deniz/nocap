@@ -273,6 +273,15 @@ That output proves the entire council works. No Slack, no frontend, no MCP — j
 - **Files touched**: `nocap-council/nocap_council/code.py`, `nocap-council/nocap_council/orchestrator.py`, `nocap-council/nocap_council/cli.py`, possibly `nocap-council/nocap_council/polygraph.py` (only if the 1.0-severity branch needs adjustment for `llm_judge`).
 - **Hours**: 3
 
+### T1.24 — Spec equation ranking + orchestrator `_return` target_var fallback (post-T1.23 follow-up)
+
+- [~] **@devin — 2026-04-25 19:50**
+- **Deliverable**: (1) `spec.py` `_JSON_INSTRUCTION` gains an "Equation ranking — REQUIRED" section that tells the function-aware Spec to rank `claimed_equations` in descending priority order — function-defining equations (LHS = function output) FIRST, intermediate assignments next, notational definitions last. Updates the Adam worked example to lead with `\theta_t = ...` and adds a new transformer-attention worked example showing `Attention(Q,K,V) = softmax(QK^T/sqrt(d_k)) V` correctly leading the equation list (vs the wrong version that drops `sqrt(d_k)` by extracting only the intermediate `scores = QK^T`). (2) `orchestrator._strategy_evidence` symbolic/numerical iteration loop: when `_heuristic_target_var` returns a target that isn't a `code_env` key, fall back to `_return` (the orchestrator's canonical "function output" key). The fallback fires BEFORE the `_is_self_referential` check and REPLACES the heuristic outright (no double matcher calls). Function-defining equations (e.g. `Attention(Q,K,V)` with LHS = the function call) need this bridge because their LHS isn't a Python identifier in the function's env.
+- **Why**: on `attention_buggy.py` (planted bug: missing `/sqrt(d_k)` scaling in `scaled_dot_product_attention`), Spec extracted equation 1 as the intermediate `scores = QK^T` instead of the full `Attention(Q,K,V) = softmax(QK^T/sqrt(d_k)) V`. The `sqrt(d_k)` scaling lives ONLY in the full formula, so the diagnosis came back as "missing matrix multiplication" rather than "missing 1/sqrt(d_k)". Two coupled root causes: Spec doesn't know which equation is the function's RETURN value (priority signal), and the orchestrator's target_var heuristic can't bridge `Attention(Q,K,V)`-style function-call LHSes to `code_env["_return"]`.
+- **Acceptance**: (1) `make smoke-adam` still exits 0 (regression — the new Adam ranking must not break the old equation set). (2) Live transformer attention buggy: `verdict=anomaly` with judge response showing `paper_coefficient` mentioning `sqrt(d_k)` and `code_coefficient` lacking it; `coefficients_match=false`; residual mentions sqrt / scaling — NOT "missing matrix multiplication". (3) Live DDPM `q_sample` (buggy + clean) — T1.23 regression must still pass with the same diagnoses.
+- **Files touched**: `nocap-council/nocap_council/spec.py`, `nocap-council/nocap_council/orchestrator.py`.
+- **Hours**: 2
+
 ### T1.17 — Sponsor track wiring (Gemma 4 + GoDaddy + Atlas seeds)
 
 - [ ] **@user** (manual setup steps; agents can't do these)
