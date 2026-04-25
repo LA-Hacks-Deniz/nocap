@@ -121,7 +121,7 @@ That output proves the entire council works. No Slack, no frontend, no MCP — j
 
 ### T1.6 — `structural_match.py`
 
-- [ ] **@devin**
+- [x] **@devin**
 - **Deliverable**: `nocap_council/structural_match.py` with `match_structure(paper_extract, code_extract) -> [{type, location, expected, actual, severity}]` returning a list of mismatches.
 - **Acceptance**: tests catch (a) "paper has 4 RK4 stages, code has 3", (b) "paper lr=3e-4, code lr=1e-4", (c) "paper Algorithm 1 has 7 lines, code body has 6 distinct ops".
 - **Files touched**: `nocap-council/nocap_council/structural_match.py`.
