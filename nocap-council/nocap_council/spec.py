@@ -1,4 +1,4 @@
-# Owner: CLAUDE — Phase 1 task T1.8 (refactored under T1.21 + T1.22 + T1.24 — DEVIN)
+# Owner: CLAUDE — Phase 1 task T1.8 (refactored under T1.21 + T1.22 + T1.24 + T1.25 v3 — DEVIN)
 """Formulator role — extract the verification claim from a paper URL + code.
 
 Wraps `prompts/formulator.txt` (OptimAI Appendix B Formulator with paper-vs-code
@@ -414,6 +414,214 @@ def extract_claim(
         claim = _empty_claim()
     out = claim.model_dump()
     # Per phase-1.md T1.8 return shape, claimed_hyperparams is a flat dict.
+    out["claimed_hyperparams"] = {h["name"]: h["value"] for h in out["claimed_hyperparams"]}
+    return out
+
+
+# ----------------------------------------------------------------------
+# T1.25 v3 — decoupled Spec: code-blind paper-claim extractor
+# ----------------------------------------------------------------------
+#
+# v1 (OMIT-rule tightening) and v2 (Path A revert) both failed to keep
+# Gemma from dropping `\hat{m}_t` / `\hat{v}_t` on `adam_buggy`. Root
+# cause: the single-shot ``extract_claim`` mixes paper context AND code
+# body into the same prompt, and Gemma over-indexes on the code — when
+# it sees ``m_hat = self.m`` (the buggy alias, no division), it omits
+# the bias-correction equations from ``claimed_equations[]`` because
+# they don't appear to be "implemented" in the code. The bias is in the
+# combined prompt; no amount of prompt-text tweaks can override it.
+#
+# T1.25 v3 splits the extraction in two passes (orchestrator wires both
+# in stage 3):
+#
+#   Pass 1: ``extract_paper_claim`` — code-BLIND. Gemma sees ONLY the
+#           paper sections / equations / algorithms. It lists every
+#           equation the paper defines, capturing what the paper says.
+#   Pass 2: ``focus_claim_to_function`` — re-ranks the pass-1 claim
+#           against the function-under-verification source. Reorders
+#           only; never drops.
+#
+# Token-budget impact: 2 Gemma calls per ``extract_claim`` instead of
+# 1. Gemma 3 27B free-tier ceiling is ~14,400 RPD; the additional call
+# is comfortably within budget. No inter-stage sleep needed.
+
+_PAPER_CLAIM_SYSTEM = (
+    "You are a paper-claim extractor. Given the paper's sections and "
+    "equations, extract the canonical mathematical claim WITHOUT "
+    "inferring what implementing code might or might not do. List EVERY "
+    "equation the paper defines, even ones a buggy implementation might "
+    "omit. Capture WHAT THE PAPER SAYS, period."
+)
+
+_PAPER_CLAIM_INSTRUCTION = """
+### Output requirement
+Return ONLY a JSON object of the exact form:
+
+{
+  "paper_section": "<the section the central claim originates from, e.g. 'Algorithm 1' or '§4'>",
+  "claimed_equations": [
+    "<equation 1 in LaTeX, plain (no \\mathbf), current-state indexing>",
+    "<equation 2>",
+    "..."
+  ],
+  "claimed_function": "<one short phrase describing what the paper's central function computes>",
+  "claimed_hyperparams": [
+    {"name": "<symbol or name, e.g. beta1>", "value": "<as in paper, e.g. 0.9>"},
+    ... zero or more items ...
+  ],
+  "architecture_description": "<paragraph if the paper shows an architecture diagram, else empty string>"
+}
+
+No prose, no markdown fences. `claimed_hyperparams` MUST be a list of
+{name, value} objects (not a dict). Every value MUST be a string. If a
+field has no content, return an empty string or empty list, never null.
+
+### Extraction rules
+
+1. **List EVERY equation the paper defines** for the central claim's
+   section — including state-update rules, bias-correction terms,
+   normalization steps, notational shorthand. Do NOT filter equations
+   based on what code might implement; you are not seeing any code.
+2. **No text-styling LaTeX.** Do NOT wrap variables in `\\mathbf{...}`,
+   `\\textbf{...}`, `\\boldsymbol{...}`, `\\vec{...}`. Plain
+   `m_t`, `\\beta_1`, `\\hat{m}_t` only.
+3. **Current-state indexing.** For update rules, write the LHS at step
+   `t` and reference the previous step `t-1` on the RHS — NEVER write
+   the LHS at step `t+1`. The downstream matcher's heuristic looks for
+   the LHS variable in the post-assignment environment.
+4. **Distribution-form rewrite (REQUIRED).** When the paper writes a
+   forward / posterior / prior as a Gaussian density `q(...) = N(mean,
+   variance I)`, REWRITE it as the corresponding reparameterization
+   assignment so the matcher has an LHS to compare against.
+   - Generic: `q(x | y) = N(x; \\mu(y), \\Sigma(y) I)` → `x = \\mu(y) + \\sqrt{\\Sigma(y)} \\epsilon`, `\\epsilon \\sim N(0, I)`.
+   - DDPM eq 4: `q(x_t | x_0) = N(x_t; \\sqrt{\\bar{\\alpha}_t} x_0, (1 - \\bar{\\alpha}_t) I)` → `x_t = \\sqrt{\\bar{\\alpha}_t} x_0 + \\sqrt{1 - \\bar{\\alpha}_t} \\epsilon`.
+5. **ASCII greek aliases for hyperparameters.** When a hyperparameter
+   has a common ASCII alias used in code (`beta1`, `beta2`, `lr`, `eps`,
+   `gamma`, `tau`), the `claimed_hyperparams.name` MUST be the ASCII
+   alias even if the paper uses `\\beta_1`, `\\alpha`, `\\epsilon`. The
+   equation strings can keep the LaTeX form (`\\beta_1`).
+
+### Worked example — Adam optimizer (Kingma & Ba 2014, Algorithm 1)
+Output:
+```json
+{
+  "paper_section": "Algorithm 1",
+  "claimed_equations": [
+    "m_t = \\beta_1 m_{t-1} + (1 - \\beta_1) g_t",
+    "v_t = \\beta_2 v_{t-1} + (1 - \\beta_2) g_t^2",
+    "\\hat{m}_t = m_t / (1 - \\beta_1^t)",
+    "\\hat{v}_t = v_t / (1 - \\beta_2^t)",
+    "\\theta_t = \\theta_{t-1} - \\alpha \\hat{m}_t / (\\sqrt{\\hat{v}_t} + \\epsilon)"
+  ],
+  "claimed_function": "Adam optimizer parameter update step",
+  "claimed_hyperparams": [
+    {"name": "beta1", "value": "0.9"},
+    {"name": "beta2", "value": "0.999"},
+    {"name": "lr", "value": "0.001"},
+    {"name": "eps", "value": "1e-8"}
+  ],
+  "architecture_description": ""
+}
+```
+Note: every equation in the algorithm is listed, including BOTH
+bias-correction equations (`\\hat{m}_t`, `\\hat{v}_t`). Do NOT omit
+them — they are part of the paper's definition.
+"""
+
+
+def _format_paper_for_extraction(paper_dict: dict) -> str:
+    """Serialize ``parse_paper`` output into a flat text view for Gemma.
+
+    The pass-1 prompt is code-blind, so we lay out every section's
+    equations, algorithms, and hyperparams as plain text. Skips the
+    ``_preamble`` / ``_unsectioned`` buckets unless they're the only
+    ones present.
+    """
+    lines: list[str] = []
+    skip_keys = {"_error"}
+    sections = [
+        (name, bucket)
+        for name, bucket in paper_dict.items()
+        if name not in skip_keys and isinstance(bucket, dict)
+    ]
+    # Drop empty buckets — they add noise to the prompt without signal.
+    sections = [
+        (name, bucket)
+        for name, bucket in sections
+        if bucket.get("equations") or bucket.get("algorithms") or bucket.get("hyperparams")
+    ]
+    for name, bucket in sections:
+        lines.append(f"## Section: {name}")
+        eqs = bucket.get("equations") or []
+        if eqs:
+            lines.append("### Equations")
+            for i, eq in enumerate(eqs):
+                latex = (eq.get("latex") or "").strip()
+                label = eq.get("label")
+                tag = f" (label={label})" if label else ""
+                lines.append(f"  [eq{i}{tag}] {latex}")
+        algos = bucket.get("algorithms") or []
+        if algos:
+            lines.append("### Algorithms")
+            for i, algo in enumerate(algos):
+                raw = (algo.get("raw") or "").strip()
+                lines.append(f"  [alg{i}]")
+                for ln in raw.splitlines():
+                    lines.append(f"    {ln}")
+        hp = bucket.get("hyperparams") or {}
+        if hp:
+            lines.append("### Hyperparameters")
+            for sym, val in hp.items():
+                lines.append(f"  {sym} = {val}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def extract_paper_claim(
+    paper_arxiv_id: str,
+    paper_dict: dict,
+) -> dict:
+    """Pass 1 of T1.25 v3: code-BLIND paper-claim extraction.
+
+    Inputs are ONLY the arxiv ID + ``paper_extract.parse_paper`` output
+    (the section-keyed dict). NO code is shown to Gemma. The returned
+    claim lists every equation the paper defines, capturing what the
+    paper says without any code-driven inference.
+
+    Returns the same dict shape as :func:`extract_claim` (with
+    ``claimed_hyperparams`` flattened to a name→value dict).
+    """
+    paper_text = _format_paper_for_extraction(paper_dict)
+    user_prompt = (
+        f"Paper arXiv ID: {paper_arxiv_id}\n\n"
+        f"Paper sections (from LaTeX source):\n\n{paper_text}\n"
+        f"{_PAPER_CLAIM_INSTRUCTION}"
+    )
+    print(
+        f"[spec.paper_claim] prompt_chars={len(user_prompt)} "
+        f"est_tokens={len(user_prompt) // 4}",
+        file=sys.stderr,
+    )
+    raw_text = client.call(
+        model="gemma-3-27b-it",
+        system=_PAPER_CLAIM_SYSTEM,
+        user=user_prompt,
+        json_schema={"type": "object"},
+    )
+    repaired = _repair_latex_escapes(raw_text)
+    try:
+        raw = json.loads(repaired)
+        claim = Claim.model_validate(raw)
+    except (json.JSONDecodeError, ValidationError) as e:
+        print(
+            f"[spec.paper_claim] WARNING: Claim parse/validate failed "
+            f"({type(e).__name__}), returning empty Claim. "
+            f"Detail: {str(e)[:200]}",
+            file=sys.stderr,
+        )
+        claim = _empty_claim()
+    out = claim.model_dump()
+    # Match ``extract_claim`` final shape: claimed_hyperparams as flat dict.
     out["claimed_hyperparams"] = {h["name"]: h["value"] for h in out["claimed_hyperparams"]}
     return out
 
