@@ -208,7 +208,7 @@ That output proves the entire council works. No Slack, no frontend, no MCP — j
 
 ### T1.13 — `orchestrator.py`
 
-- [ ] **@devin**
+- [~] **@devin — 2026-04-25 15:45**
 - **Deliverable**: `nocap_council/orchestrator.py` with `verify(paper_arxiv_id, code_str, user_msg=None) -> verdict_dict`. Top-level loop: `paper_extract → spec → plan → for strategy in plans: code → polygraph(evidence)`. Streams events to stdout as line-delimited JSON.
 - **Acceptance**: end-to-end run on Adam clean returns `verdict='Pass'`, on Adam buggy returns `verdict='Anomaly'`. Each call < 30s wall clock with Gemma 4.
 - **Files touched**: `nocap-council/nocap_council/orchestrator.py`.
