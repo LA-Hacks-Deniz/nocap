@@ -100,7 +100,7 @@ That output proves the entire council works. No Slack, no frontend, no MCP — j
 
 ### T1.4 — `code_extract.py`
 
-- [ ] **@devin**
+- [~] **@devin — 2026-04-25 09:09**
 - **Deliverable**: `nocap_council/code_extract.py` with `code_to_sympy(code, fn_name) -> dict[str, sympy.Expr]` that walks Python AST and converts arithmetic to sympy.
 - **Acceptance**: `python -c "from nocap_council.code_extract import *; print(code_to_sympy(open('test_adam_clean.py').read(), 'step'))"` returns dict with `m_hat`, `v_hat`, `theta` keys mapped to sympy exprs.
 - **Files touched**: `nocap-council/nocap_council/code_extract.py`.
