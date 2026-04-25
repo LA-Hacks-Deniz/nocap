@@ -44,6 +44,7 @@ import gzip
 import io
 import os
 import re
+import sys
 import tarfile
 from pathlib import Path
 from typing import Any
@@ -262,6 +263,211 @@ def _inline_inputs(tex: str, base: Path, depth: int = 0) -> str:
     return tex
 
 
+# ----------------------------------------------------------------------
+# Author-defined ``\newcommand`` macro expansion (T1.25 v3 follow-up).
+#
+# Some papers (e.g. Adam, arXiv 1412.6980) define LaTeX shortcuts in the
+# preamble — ``\newcommand{\wm}{\hat{m}}`` — and use them inside the
+# main algorithm. If we hand the raw ``\wm`` token to Gemma, the
+# downstream matcher's symbol heuristic doesn't know ``wm == \hat{m}``,
+# so the matcher misses the bias-correction equations entirely.
+#
+# We do a deterministic preamble pass that scans for ``\newcommand``
+# (and ``\renewcommand`` / ``\providecommand``) definitions, captures
+# their bodies via brace-balanced extraction, removes the definitions
+# from the source, and substitutes references throughout. Macros with
+# numbered arguments (``\newcommand{\foo}[1]{\bar{#1}}``) are handled.
+# ``\def``, conditionals, recursive macros, ``[default]`` arguments,
+# and other exotic forms fall through unexpanded — we log a stderr
+# warning per skipped macro and let downstream parsing see the raw
+# token (which usually still works fine for non-critical macros).
+# ----------------------------------------------------------------------
+
+_NEWCOMMAND_HEAD_RE = re.compile(
+    r"\\(?:newcommand|renewcommand|providecommand)\*?\s*\{?\s*\\([A-Za-z]+)\*?\s*\}?"
+)
+
+
+def _find_balanced(text: str, start: int) -> int:
+    """Given ``text[start] == '{'``, return the index of the matching ``}``.
+
+    Returns ``-1`` if no balanced match exists. Skips ``\\{`` / ``\\}``
+    escapes so an escaped brace inside the body doesn't unbalance the
+    scan.
+    """
+    if start >= len(text) or text[start] != "{":
+        return -1
+    depth = 0
+    i = start
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if c == "\\" and i + 1 < n:
+            # Skip the escaped char (handles \{, \}, \\).
+            i += 2
+            continue
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    return -1
+
+
+def _parse_newcommand_definitions(
+    tex: str,
+) -> tuple[dict[str, tuple[int, str]], list[tuple[int, int]]]:
+    """Scan ``tex`` for ``\\newcommand``-shaped macro definitions.
+
+    Returns ``(defs, spans)`` where ``defs`` maps ``name -> (n_args, body)``
+    and ``spans`` is a list of ``(start, end)`` byte ranges covering each
+    full definition (so the caller can splice them out before
+    substitution to avoid re-detecting them).
+    """
+    defs: dict[str, tuple[int, str]] = {}
+    spans: list[tuple[int, int]] = []
+    for m in _NEWCOMMAND_HEAD_RE.finditer(tex):
+        name = m.group(1)
+        i = m.end()
+        # Skip whitespace between macro head and optional [N] / body brace.
+        while i < len(tex) and tex[i] in " \t\n":
+            i += 1
+        n_args = 0
+        # Optional ``[N]`` argument count.
+        if i < len(tex) and tex[i] == "[":
+            close = tex.find("]", i)
+            if close == -1:
+                continue
+            try:
+                n_args = int(tex[i + 1 : close].strip())
+            except ValueError:
+                # Skip exotic forms like ``[1][default]`` we don't model.
+                print(
+                    f"[paper_extract] WARNING: skipping \\{name} — "
+                    f"non-integer arg count in {tex[i:close + 1]!r}",
+                    file=sys.stderr,
+                )
+                continue
+            i = close + 1
+            while i < len(tex) and tex[i] in " \t\n":
+                i += 1
+            # Optional ``[default]`` for first arg — skip it as not modelled.
+            if i < len(tex) and tex[i] == "[":
+                close2 = tex.find("]", i)
+                if close2 == -1:
+                    continue
+                i = close2 + 1
+                while i < len(tex) and tex[i] in " \t\n":
+                    i += 1
+        if i >= len(tex) or tex[i] != "{":
+            continue
+        end = _find_balanced(tex, i)
+        if end == -1:
+            continue
+        body = tex[i + 1 : end]
+        # Recursive self-reference would loop substitution forever.
+        if re.search(r"\\" + re.escape(name) + r"(?![A-Za-z])", body):
+            print(
+                f"[paper_extract] WARNING: skipping \\{name} — "
+                f"recursive self-reference in body",
+                file=sys.stderr,
+            )
+            continue
+        # Last definition wins (matches LaTeX semantics for renewcommand).
+        defs[name] = (n_args, body)
+        spans.append((m.start(), end + 1))
+    return defs, spans
+
+
+def _strip_spans(tex: str, spans: list[tuple[int, int]]) -> str:
+    """Remove ``spans`` (byte ranges) from ``tex`` in reverse order."""
+    if not spans:
+        return tex
+    spans = sorted(spans, key=lambda s: -s[0])
+    parts = list(tex)
+    for s, e in spans:
+        del parts[s:e]
+    return "".join(parts)
+
+
+def _substitute_macro(tex: str, name: str, n_args: int, body: str) -> str:
+    """Replace every ``\\name`` reference in ``tex`` with its expanded body.
+
+    For ``n_args > 0``, reads that many ``{...}`` argument groups
+    immediately following the reference and substitutes them for ``#1``,
+    ``#2`` etc. in ``body``. If the expected argument groups are
+    missing, leaves the reference unchanged.
+    """
+    pattern = re.compile(r"\\" + re.escape(name) + r"(?![A-Za-z])")
+    out_parts: list[str] = []
+    i = 0
+    for m in pattern.finditer(tex):
+        out_parts.append(tex[i : m.start()])
+        cursor = m.end()
+        if n_args == 0:
+            out_parts.append(body)
+            i = cursor
+            continue
+        # Read N argument groups, each ``{...}`` (possibly preceded by ws).
+        args: list[str] | None = []
+        cur = cursor
+        for _ in range(n_args):
+            while cur < len(tex) and tex[cur] in " \t":
+                cur += 1
+            if cur >= len(tex) or tex[cur] != "{":
+                args = None
+                break
+            close = _find_balanced(tex, cur)
+            if close == -1:
+                args = None
+                break
+            args.append(tex[cur + 1 : close])
+            cur = close + 1
+        if args is None:
+            # Couldn't read enough args — keep the reference as-is.
+            out_parts.append(m.group(0))
+            i = cursor
+        else:
+            expanded = body
+            for k, a in enumerate(args, start=1):
+                expanded = expanded.replace(f"#{k}", a)
+            out_parts.append(expanded)
+            i = cur
+    out_parts.append(tex[i:])
+    return "".join(out_parts)
+
+
+def _expand_newcommand_macros(tex: str, max_passes: int = 5) -> str:
+    """Expand author-defined ``\\newcommand`` macros throughout ``tex``.
+
+    Removes the definitions from the source and applies substitutions
+    iteratively up to ``max_passes`` times so nested macros (one body
+    references another) get fully resolved. A no-change pass terminates
+    early.
+    """
+    defs, spans = _parse_newcommand_definitions(tex)
+    if not defs:
+        return tex
+    tex = _strip_spans(tex, spans)
+    for _ in range(max_passes):
+        new_tex = tex
+        for name, (n_args, body) in defs.items():
+            try:
+                new_tex = _substitute_macro(new_tex, name, n_args, body)
+            except Exception as e:
+                print(
+                    f"[paper_extract] WARNING: macro \\{name} expansion "
+                    f"failed: {type(e).__name__}: {e}",
+                    file=sys.stderr,
+                )
+        if new_tex == tex:
+            break
+        tex = new_tex
+    return tex
+
+
 def _parse_algorithm(node: Any) -> dict[str, Any]:
     caption = node.find("caption")
     label = node.find("label")
@@ -410,6 +616,10 @@ def parse_paper(source_dir: Path) -> dict[str, Any]:
         }
 
     tex = _inline_inputs(main.read_text(errors="replace"), main.parent)
+    # Expand author-defined ``\newcommand`` macros (e.g. Adam's
+    # ``\wm`` / ``\wv`` for ``\hat{m}`` / ``\hat{v}``) before parsing
+    # so downstream consumers see canonical LaTeX.
+    tex = _expand_newcommand_macros(tex)
 
     out: dict[str, Any] = {}
     spans = _section_spans(tex)

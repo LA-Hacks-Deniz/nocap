@@ -54,10 +54,12 @@ class HyperParam(BaseModel):
 
 class Claim(BaseModel):
     paper_section: str = Field(description="Section of the paper the claim originates from, e.g. '§4 Algorithm 1' or 'Algorithm 2'.")
-    claimed_equations: list[str] = Field(description="Equations the code is claimed to implement, in LaTeX or readable math.")
+    claimed_equations: list[str] = Field(description="COMPUTATIONAL PIPELINE equations only — state updates, bias corrections, function returns. Excludes initialization and counters (see those buckets).")
     claimed_function: str = Field(description="The claimed function expression — what the implemented function computes.")
     claimed_hyperparams: list[HyperParam] = Field(default_factory=list, description="Hyperparameters declared in the paper.")
     architecture_description: str = Field(default="", description="Description of any architecture diagram present, else empty.")
+    initial_conditions: list[str] = Field(default_factory=list, description="t=0 setup equations (e.g. 'm_0 = 0', '\\theta_0 \\sim N(0, I)'). NOT computational pipeline.")
+    counters: list[str] = Field(default_factory=list, description="Loop bookkeeping increments (e.g. 't = t + 1'). NOT computational pipeline.")
 
 
 _FUNCTION_AWARE_INSTRUCTION = """
@@ -271,6 +273,8 @@ def _empty_claim() -> Claim:
         claimed_function="",
         claimed_hyperparams=[],
         architecture_description="",
+        initial_conditions=[],
+        counters=[],
     )
 
 
@@ -355,67 +359,54 @@ def extract_claim(
     *,
     function_name: str | None = None,
     function_source: str | None = None,
+    paper_dict: dict | None = None,
 ) -> dict:
     """Run the Formulator on a paper URL + Python code, return the structured claim.
 
     Returns a dict with keys: paper_section, claimed_equations, claimed_function,
-    claimed_hyperparams, architecture_description. Routed through Gemma 3 27B —
-    the JSON shape is pinned via the prompt's `_JSON_INSTRUCTION` block (Gemma
-    does not enforce `response_schema`). Validation failures degrade to an
-    empty-defaults Claim with a warning logged to stderr.
+    claimed_hyperparams, architecture_description. Routed through Gemma 3 27B
+    via two passes (T1.25 v3 — decoupled Spec):
 
-    When ``function_name`` and ``function_source`` are provided (T1.22), the
-    prompt names the function under verification and asks Gemma to extract
-    the equation(s) THAT function claims to implement. Without these args,
-    Spec falls back to its T1.21 paper-blind behavior (back-compat for
-    callers that don't pass ``--function``).
+      Pass 1 (always): :func:`extract_paper_claim` extracts a canonical
+        paper claim from the paper's parsed sections — CODE-BLIND. This
+        eliminates the v1/v2 failure mode where Gemma over-indexed on the
+        implementing code's body and dropped paper equations the code
+        appeared to "skip" (e.g. dropping `\\hat{m}_t` for an `adam_buggy`
+        whose body has the buggy `m_hat = self.m` alias).
+      Pass 2 (only when ``function_name`` + ``function_source`` are
+        provided): :func:`focus_claim_to_function` reorders the pass-1
+        claim against the function source. Re-ranking only — NEVER drops
+        equations. If the focuser response is invalid, the pass-1 claim
+        is returned unchanged.
+
+    The ``paper_dict`` kwarg lets the orchestrator pass through its
+    already-fetched ``paper_extract.parse_paper`` output to avoid a
+    second arXiv round-trip; if None, this function fetches + parses
+    on demand for back-compat with callers that don't have it handy.
+    Validation failures in either pass degrade to an empty-defaults
+    Claim with a warning logged to stderr — the Formulator never
+    raises so the orchestrator's ``inconclusive`` path stays the only
+    failure mode the gateway sees.
+
+    The legacy single-shot prompt (formulator.txt + ``_JSON_INSTRUCTION``
+    + ``_FUNCTION_AWARE_INSTRUCTION``) is no longer used by this
+    function; those constants remain for reference only and may be
+    removed in a follow-up cleanup once T1.25 v3 is merged.
     """
-    template = _load_prompt()
-    task_content = _format_task_content(
-        paper_url, code_str, user_msg, function_source=function_source
-    )
-    function_block = ""
+    # ``code_str`` and ``user_msg`` are accepted for API back-compat but
+    # are no longer fed into Gemma — pass 1 is intentionally code-blind.
+    del code_str, user_msg
+    if paper_dict is None:
+        # Back-compat: callers without an already-parsed paper_dict
+        # (e.g. ad-hoc scripts) pay the fetch + parse round-trip here.
+        from nocap_council import paper_extract  # local import to avoid cycles
+        src = paper_extract.fetch_arxiv_source(paper_url)
+        paper_dict = paper_extract.parse_paper(src)
+    paper_arxiv_id = paper_url
+    claim = extract_paper_claim(paper_arxiv_id, paper_dict)
     if function_name and function_source:
-        function_block = _FUNCTION_AWARE_INSTRUCTION.format(
-            function_name=function_name,
-            function_source=function_source.rstrip(),
-        )
-    prompt = template.replace(_TASK_PLACEHOLDER, task_content) + function_block + _JSON_INSTRUCTION
-    # T1.22 token-budget log: rough char-to-token ratio is ~4 for English / Python
-    # source; this is a sanity check, not a hard cap. If we ever see this above
-    # ~10k for a function-aware call, the trim isn't doing its job.
-    print(
-        f"[spec] prompt_chars={len(prompt)} est_tokens={len(prompt) // 4} "
-        f"function_aware={bool(function_name and function_source)}",
-        file=sys.stderr,
-    )
-    raw_text = client.call(
-        model="gemma-3-27b-it",
-        system="",
-        user=prompt,
-        json_schema={"type": "object"},
-    )
-    # T1.22: ``_repair_latex_escapes`` doubles single-backslash LaTeX
-    # escapes (``\beta``) so ``json.loads`` accepts them as ``\\beta``.
-    # The negative-lookbehind in the regex skips already-doubled pairs
-    # (``\\epsilon``), which Gemma sometimes emits — without that, the
-    # repair would corrupt valid JSON. Defensive parse: validation
-    # errors degrade to an empty-defaults Claim with a warning.
-    repaired = _repair_latex_escapes(raw_text)
-    try:
-        raw = json.loads(repaired)
-        claim = Claim.model_validate(raw)
-    except (json.JSONDecodeError, ValidationError) as e:
-        print(
-            f"[spec] WARNING: Claim parse/validate failed ({type(e).__name__}), "
-            f"returning empty Claim. Detail: {str(e)[:200]}",
-            file=sys.stderr,
-        )
-        claim = _empty_claim()
-    out = claim.model_dump()
-    # Per phase-1.md T1.8 return shape, claimed_hyperparams is a flat dict.
-    out["claimed_hyperparams"] = {h["name"]: h["value"] for h in out["claimed_hyperparams"]}
-    return out
+        claim = focus_claim_to_function(claim, function_name, function_source)
+    return claim
 
 
 # ----------------------------------------------------------------------
@@ -446,11 +437,49 @@ def extract_claim(
 # is comfortably within budget. No inter-stage sleep needed.
 
 _PAPER_CLAIM_SYSTEM = (
-    "You are a paper-claim extractor. Given the paper's sections and "
-    "equations, extract the canonical mathematical claim WITHOUT "
-    "inferring what implementing code might or might not do. List EVERY "
-    "equation the paper defines, even ones a buggy implementation might "
-    "omit. Capture WHAT THE PAPER SAYS, period."
+    "You are a paper-claim categorizer. Given the paper's sections and "
+    "equations, sort every equation the paper writes into THREE buckets: "
+    "(1) `claimed_equations` — the COMPUTATIONAL PIPELINE: state updates, "
+    "bias corrections, normalization, the function-defining return; "
+    "(2) `initial_conditions` — t=0 setup (e.g. `m_0 = 0`, "
+    "`\\theta_0 \\sim N(0, I)`); "
+    "(3) `counters` — bookkeeping increments (e.g. `t = t + 1`). "
+    "Every equation goes into EXACTLY ONE bucket. Do NOT infer what "
+    "implementing code might or might not do — categorize by mathematical "
+    "shape, not by code presence. Pure-constant assignments to a "
+    "hyperparameter symbol (e.g. `\\epsilon = 10^{-8}`) belong in "
+    "`claimed_hyperparams`, not in any of the three equation buckets. "
+    "Preserve each equation EXACTLY as the paper writes it. When the "
+    "paper introduces a new symbol via an equation (e.g. "
+    "`\\hat{m}_t = m_t / (1 - \\beta_1^t)` introduces \\hat{m}_t), keep "
+    "the LHS symbol VERBATIM. Do NOT substitute the LHS with its RHS "
+    "definition. Do NOT inline bias-corrections or other derived symbols "
+    "into downstream equations — keep \\hat{m}_t, \\hat{v}_t etc. as-is "
+    "in the parameter update. Verbatim applies to SYMBOLS — STRIP "
+    "text-styling LaTeX (\\mathbf, \\boldsymbol, \\mathrm); those are "
+    "formatting, not semantic content. "
+    "EXCEPTION — probability density definitions: verbatim preservation "
+    "applies to symbol-level equations (m_t = ..., \\hat{m}_t = ...); it "
+    "does NOT apply to probability density definitions, which describe "
+    "distributions rather than computable values and cannot be verified "
+    "by the matcher in their density form. When the paper writes a "
+    "Gaussian density definition like `p(x | y) = N(x; mean, variance * "
+    "I)`, emit instead the REPARAMETERIZATION form (assignment-style, "
+    "matchable against code that samples from this density): "
+    "`x = mean + sqrt(variance) * \\epsilon` where \\epsilon is "
+    "implicitly ~ N(0, I). Worked examples (DDPM, arXiv 2006.11239 §2): "
+    "(a) `q(x_t | x_{t-1}) = N(x_t; sqrt(1 - \\beta_t) x_{t-1}, "
+    "\\beta_t I)` becomes `x_t = sqrt(1 - \\beta_t) x_{t-1} + "
+    "sqrt(\\beta_t) \\epsilon`; "
+    "(b) `q(x_t | x_0) = N(x_t; sqrt(\\bar\\alpha_t) x_0, "
+    "(1 - \\bar\\alpha_t) I)` becomes `x_t = sqrt(\\bar\\alpha_t) x_0 + "
+    "sqrt(1 - \\bar\\alpha_t) \\epsilon`; "
+    "(c) `p_\\theta(x_{t-1} | x_t) = N(x_{t-1}; \\mu_\\theta(x_t, t), "
+    "\\Sigma_\\theta(x_t, t))` becomes `x_{t-1} = \\mu_\\theta(x_t, t) + "
+    "sqrt(\\Sigma_\\theta(x_t, t)) \\epsilon`. This rewrite is REQUIRED "
+    "for ALL Gaussian density definitions. Non-density equations "
+    "(`\\tilde\\mu_t(x_t, x_0) = ...`, `\\tilde\\beta_t = ...`) stay "
+    "verbatim per the main rule."
 )
 
 _PAPER_CLAIM_INSTRUCTION = """
@@ -460,8 +489,16 @@ Return ONLY a JSON object of the exact form:
 {
   "paper_section": "<the section the central claim originates from, e.g. 'Algorithm 1' or '§4'>",
   "claimed_equations": [
-    "<equation 1 in LaTeX, plain (no \\mathbf), current-state indexing>",
-    "<equation 2>",
+    "<computational-pipeline equation 1 in LaTeX, plain (no \\mathbf), current-state indexing>",
+    "<computational-pipeline equation 2>",
+    "..."
+  ],
+  "initial_conditions": [
+    "<t=0 setup equation (e.g. 'm_0 = 0', '\\theta_0 \\sim N(0, I)')>",
+    "..."
+  ],
+  "counters": [
+    "<bookkeeping increment (e.g. 't = t + 1')>",
     "..."
   ],
   "claimed_function": "<one short phrase describing what the paper's central function computes>",
@@ -475,43 +512,97 @@ Return ONLY a JSON object of the exact form:
 No prose, no markdown fences. `claimed_hyperparams` MUST be a list of
 {name, value} objects (not a dict). Every value MUST be a string. If a
 field has no content, return an empty string or empty list, never null.
+The three equation lists (`claimed_equations`, `initial_conditions`,
+`counters`) MUST be present even if empty.
 
-### Extraction rules
+### Categorization rules — every equation in the paper goes into EXACTLY ONE bucket
 
-1. **List EVERY equation the paper defines** for the central claim's
-   section — including state-update rules, bias-correction terms,
-   normalization steps, notational shorthand. Do NOT filter equations
-   based on what code might implement; you are not seeing any code.
-2. **No text-styling LaTeX.** Do NOT wrap variables in `\\mathbf{...}`,
+**`claimed_equations`** — COMPUTATIONAL PIPELINE only. An equation
+belongs here iff it expresses a mathematical relationship between
+values that are computed at runtime: state-update rules,
+bias-correction terms, normalization steps, the function-defining
+return expression. These are the equations a verifier would actually
+match against a code implementation.
+  Examples (Adam):
+    `m_t = \\beta_1 m_{t-1} + (1 - \\beta_1) g_t`
+    `\\hat{m}_t = m_t / (1 - \\beta_1^t)`
+    `\\theta_t = \\theta_{t-1} - \\alpha \\hat{m}_t / (\\sqrt{\\hat{v}_t} + \\epsilon)`
+
+**`initial_conditions`** — t=0 setup. An equation belongs here iff
+its LHS has subscript `_0` (or it explicitly states a starting value)
+AND its RHS is a constant or distribution sample at t=0.
+  Examples:
+    `m_0 = 0`, `v_0 = 0`, `t = 0` (Adam initialization)
+    `\\theta_0 \\sim N(0, I)` (parameter initialization)
+    `x_T \\sim N(0, I)` (DDPM sampling start)
+
+**`counters`** — bookkeeping increments. An equation belongs here
+iff its full form is `var = var ± constant`. These advance loop
+state; they don't compute pipeline values.
+  Examples:
+    `t = t + 1`, `i = i - 1`
+
+**`claimed_hyperparams`** (NOT one of the three equation buckets) —
+pure-constant assignments to a hyperparameter symbol go here, NOT
+into any equation list.
+  Examples:
+    `\\epsilon = 10^{-8}` → `{"name": "eps", "value": "1e-8"}`
+    `\\alpha = 0.001` → `{"name": "lr", "value": "0.001"}`
+
+### Formatting rules (apply to every bucket)
+
+1. **No text-styling LaTeX.** Do NOT wrap variables in `\\mathbf{...}`,
    `\\textbf{...}`, `\\boldsymbol{...}`, `\\vec{...}`. Plain
    `m_t`, `\\beta_1`, `\\hat{m}_t` only.
-3. **Current-state indexing.** For update rules, write the LHS at step
+2. **Current-state indexing.** For update rules, write the LHS at step
    `t` and reference the previous step `t-1` on the RHS — NEVER write
    the LHS at step `t+1`. The downstream matcher's heuristic looks for
    the LHS variable in the post-assignment environment.
-4. **Distribution-form rewrite (REQUIRED).** When the paper writes a
-   forward / posterior / prior as a Gaussian density `q(...) = N(mean,
-   variance I)`, REWRITE it as the corresponding reparameterization
-   assignment so the matcher has an LHS to compare against.
+3. **Distribution-form rewrite (REQUIRED for `claimed_equations`).** When
+   the paper writes a forward / posterior / prior as a Gaussian density
+   `q(...) = N(mean, variance I)`, REWRITE it as the corresponding
+   reparameterization assignment so the matcher has an LHS to compare
+   against.
    - Generic: `q(x | y) = N(x; \\mu(y), \\Sigma(y) I)` → `x = \\mu(y) + \\sqrt{\\Sigma(y)} \\epsilon`, `\\epsilon \\sim N(0, I)`.
    - DDPM eq 4: `q(x_t | x_0) = N(x_t; \\sqrt{\\bar{\\alpha}_t} x_0, (1 - \\bar{\\alpha}_t) I)` → `x_t = \\sqrt{\\bar{\\alpha}_t} x_0 + \\sqrt{1 - \\bar{\\alpha}_t} \\epsilon`.
-5. **ASCII greek aliases for hyperparameters.** When a hyperparameter
+4. **ASCII greek aliases for hyperparameters.** When a hyperparameter
    has a common ASCII alias used in code (`beta1`, `beta2`, `lr`, `eps`,
    `gamma`, `tau`), the `claimed_hyperparams.name` MUST be the ASCII
    alias even if the paper uses `\\beta_1`, `\\alpha`, `\\epsilon`. The
    equation strings can keep the LaTeX form (`\\beta_1`).
 
 ### Worked example — Adam optimizer (Kingma & Ba 2014, Algorithm 1)
-Output:
+Algorithm 1 lists (in paper order):
+  `m_0 = 0`, `v_0 = 0`, `t = 0`,
+  while not converged:
+    `t = t + 1`,
+    `g_t = \\nabla_{\\theta} f_t(\\theta_{t-1})`,
+    `m_t = \\beta_1 m_{t-1} + (1 - \\beta_1) g_t`,
+    `v_t = \\beta_2 v_{t-1} + (1 - \\beta_2) g_t^2`,
+    `\\hat{m}_t = m_t / (1 - \\beta_1^t)`,
+    `\\hat{v}_t = v_t / (1 - \\beta_2^t)`,
+    `\\theta_t = \\theta_{t-1} - \\alpha \\hat{m}_t / (\\sqrt{\\hat{v}_t} + \\epsilon)`
+
+Correct output (categorization, NOT filtering — every paper line is
+preserved, just sorted into the right bucket):
 ```json
 {
   "paper_section": "Algorithm 1",
   "claimed_equations": [
+    "g_t = \\nabla_{\\theta} f_t(\\theta_{t-1})",
     "m_t = \\beta_1 m_{t-1} + (1 - \\beta_1) g_t",
     "v_t = \\beta_2 v_{t-1} + (1 - \\beta_2) g_t^2",
     "\\hat{m}_t = m_t / (1 - \\beta_1^t)",
     "\\hat{v}_t = v_t / (1 - \\beta_2^t)",
     "\\theta_t = \\theta_{t-1} - \\alpha \\hat{m}_t / (\\sqrt{\\hat{v}_t} + \\epsilon)"
+  ],
+  "initial_conditions": [
+    "m_0 = 0",
+    "v_0 = 0",
+    "t = 0"
+  ],
+  "counters": [
+    "t = t + 1"
   ],
   "claimed_function": "Adam optimizer parameter update step",
   "claimed_hyperparams": [
@@ -523,9 +614,10 @@ Output:
   "architecture_description": ""
 }
 ```
-Note: every equation in the algorithm is listed, including BOTH
-bias-correction equations (`\\hat{m}_t`, `\\hat{v}_t`). Do NOT omit
-them — they are part of the paper's definition.
+Note: BOTH bias-correction equations (`\\hat{m}_t`, `\\hat{v}_t`) are
+in `claimed_equations` because they compute pipeline values. The
+initialization and counter lines are sorted into their dedicated
+buckets — they are NOT dropped, just moved out of the pipeline list.
 """
 
 
@@ -585,8 +677,11 @@ def extract_paper_claim(
 
     Inputs are ONLY the arxiv ID + ``paper_extract.parse_paper`` output
     (the section-keyed dict). NO code is shown to Gemma. The returned
-    claim lists every equation the paper defines, capturing what the
-    paper says without any code-driven inference.
+    claim categorizes every equation the paper writes into THREE
+    buckets — ``claimed_equations`` (computational pipeline only),
+    ``initial_conditions`` (t=0 setup), ``counters`` (loop bookkeeping).
+    Categorization is delegated entirely to Gemma; we trust its
+    judgment and emit the result as-is.
 
     Returns the same dict shape as :func:`extract_claim` (with
     ``claimed_hyperparams`` flattened to a name→value dict).
