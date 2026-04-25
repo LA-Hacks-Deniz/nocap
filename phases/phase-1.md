@@ -110,7 +110,7 @@ That output proves the entire council works. No Slack, no frontend, no MCP — j
 
 ### T1.5 — `sympy_match.py`
 
-- [ ] **@devin**
+- [~] **@devin — 2026-04-25 09:55**
 - **Deliverable**: `nocap_council/sympy_match.py` with `latex_to_sympy(s, var_map)`, `match_equation(latex, code, var_map, target_var) -> {equivalent, residual, method_used}`. Includes accent regex preprocessor and 5-sample numerical fallback.
 - **Acceptance**: `python -m nocap_council.sympy_match` runs the worked Adam example (clean → True; buggy → False with residual `m·β1^t/(1-β1^t)`).
 - **Files touched**: `nocap-council/nocap_council/sympy_match.py`.
