@@ -282,6 +282,15 @@ That output proves the entire council works. No Slack, no frontend, no MCP — j
 - **Files touched**: `nocap-council/nocap_council/spec.py`, `nocap-council/nocap_council/orchestrator.py`.
 - **Hours**: 2
 
+### T1.25 — Refine OMIT rule to preserve intermediate computation equations (post-T1.24 follow-up)
+
+- [~] **@devin — 2026-04-25 22:00**
+- **Deliverable**: `spec.py` `_JSON_INSTRUCTION` tightens T1.24's "OMIT pure notational-definition equations" rule. The current wording is too broad: Gemma over-fires on Adam's bias-correction equation `\hat{m}_t = m_t / (1 - \beta_1^t)` because the LHS looks structurally similar to a notational shorthand. With `\hat{m}_t` dropped, the numerical strategy has nothing to verify, and `adam_buggy`'s rich panel (`[numerical] m_hat mismatch` + residual `-beta1**t*m/(beta1**t - 1)` + critic feedback `The bias correction term is not correctly implemented`) is replaced with the generic `[VIGIL flag]` fallback. Tighten the OMIT criterion to apply ONLY to equations whose LHS is symbolic SHORTHAND (greek subscript, no Python identifier in the function body), not equations whose LHS is a variable the function actually computes and assigns. Add a KEEP/OMIT worked-example contrast.
+- **Why**: T1.24's OMIT rule was over-broad. The demo's Slack-screenshot hero (rich `[numerical] m_hat mismatch` panel for `adam_buggy`) regressed to a generic `[VIGIL flag]` panel because Spec dropped `\hat{m}_t = ...` from `claimed_equations[]`. The verdict is still correct (anomaly + 0.95) but the explanation evaporated — unacceptable for the demo.
+- **Acceptance**: (1) `make smoke-adam` exits 0 with both verdicts correct AND `adam_buggy`'s panel shows `[numerical] m_hat mismatch` with a real residual + critic feedback (NOT generic `[VIGIL flag]`). (2) DDPM `q_sample` buggy → still anomaly with sqrt residual (T1.24 win preserved). (3) DDPM `q_sample` clean → still pass (T1.24 regression fix preserved).
+- **Files touched**: `nocap-council/nocap_council/spec.py`.
+- **Hours**: 1
+
 ### T1.17 — Sponsor track wiring (Gemma 4 + GoDaddy + Atlas seeds)
 
 - [ ] **@user** (manual setup steps; agents can't do these)
