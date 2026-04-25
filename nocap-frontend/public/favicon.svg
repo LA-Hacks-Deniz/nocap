@@ -2,14 +2,12 @@
   <rect width="64" height="64" rx="16" fill="#FAFAFA" />
   <text
     x="50%"
-    y="52%"
+    y="54%"
     text-anchor="middle"
     dominant-baseline="middle"
-    font-family="Inter, system-ui, sans-serif"
-    font-size="44"
-    font-weight="700"
-    fill="#1a1a1a"
+    font-family="Apple Color Emoji, Segoe UI Emoji, Noto Color Emoji, sans-serif"
+    font-size="42"
   >
-    ~
+    🧢
   </text>
 </svg>

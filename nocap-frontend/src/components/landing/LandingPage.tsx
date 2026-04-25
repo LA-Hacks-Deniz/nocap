@@ -10,16 +10,10 @@ import { Button } from "@/components/ui/button";
 
 const NAV_LINKS = [
   { href: "https://github.com/LA-Hacks-Deniz/nocap", label: "GitHub" },
-  { href: "#", label: "Devpost" },
 ];
 
 const FOOTER_LINKS = [
   { href: "https://github.com/LA-Hacks-Deniz/nocap", label: "GitHub" },
-  { href: "#", label: "Devpost" },
-  {
-    href: "#",
-    label: "Slack workspace",
-  },
 ];
 
 const SPONSORS = [
@@ -34,7 +28,7 @@ const SPONSORS = [
 const BULLETS = [
   "Catches what humans take hours to find: missing math terms, faulty algorithm implementations, dropped normalization constants",
   "Four checks running in parallel: does the math symbolically match? Does it match when you plug in real numbers? Does the algorithm have the right number of steps? Are the hyperparameters the same as the paper's defaults?",
-  "Accessible from inside Slack via a single command, so engineers don't context-switch to a dashboard",
+  "Accessible from inside the Slack with a single command, so the engineers will not need to adapt to a new dashboard.",
 ];
 
 const slackLines = [
@@ -77,17 +71,18 @@ function FadeIn({
 
 function Wordmark() {
   return (
-    <span className="inline-flex items-end justify-center tracking-[-0.06em]">
+    <span className="inline-flex items-end justify-center tracking-[-0.065em]">
       <span>NoCa</span>
       <span className="relative inline-block">
         <span>p</span>
         <span
           aria-hidden="true"
-          className="pointer-events-none absolute -top-[0.72em] left-[0.05em] rotate-[-14deg] text-[0.62em]"
+          className="pointer-events-none absolute -top-[0.48em] -left-[0.02em] rotate-[-8deg] text-[0.72em]"
         >
           🧢
         </span>
       </span>
+      <span>.wiki</span>
     </span>
   );
 }
@@ -118,10 +113,10 @@ export function LandingPage() {
         <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-6 sm:px-8">
           <Link
             aria-label="NoCap home"
-            className="select-none text-2xl font-bold tracking-[-0.08em]"
+            className="select-none text-2xl leading-none"
             href="#top"
           >
-            ~
+            🧢
           </Link>
           <nav className="flex items-center gap-5 text-sm text-muted-foreground">
             {NAV_LINKS.map((link) => (
@@ -152,14 +147,6 @@ export function LandingPage() {
                 AI agent polygraph for research-grade code.
               </h1>
             </FadeIn>
-            <FadeIn className="mt-6 max-w-xl" delay={0.4}>
-              <blockquote className="text-base italic leading-relaxed text-muted-foreground sm:text-lg">
-                &quot;polygraphs what the LLM has produced.&quot;
-              </blockquote>
-              <p className="mt-3 text-sm text-muted-foreground">
-                — founder pitch to Cognition, Apr 25 2026
-              </p>
-            </FadeIn>
             <FadeIn className="mt-10" delay={0.6}>
               <Button
                 asChild
@@ -183,10 +170,10 @@ export function LandingPage() {
               <FadeIn delay={0.15}>
                 <p className="mt-6 text-lg leading-relaxed text-muted-foreground">
                   After an agent writes the implementation for a paper, the
-                  researcher activates No Cap from inside Slack. Give it the
-                  paper (arXiv ID or PDF) and the agent&apos;s implementation
-                  (Python file or PR diff). It returns a verdict — Pass or
-                  Anomaly — with confidence and per-equation evidence.
+                  researchers will activate No Cap within their Slack. Give it
+                  the paper (arXiv ID or a PDF) and the implementation of an
+                  agent (Python file or PR diff). It will return a verdict: pass
+                  or an anomaly, including confidence and per-equation evidence.
                 </p>
               </FadeIn>
               <FadeIn delay={0.3}>
@@ -201,23 +188,6 @@ export function LandingPage() {
                     </li>
                   ))}
                 </ul>
-              </FadeIn>
-              <FadeIn delay={0.45}>
-                <div className="mt-10 space-y-5 text-lg leading-relaxed text-muted-foreground">
-                  <p>
-                    From our tests, out-of-the-box agents miss subtle math bugs
-                    every time. Without No Cap, a faulty job runs on the cluster
-                    for ~6 hours of cluster CPU time. The engineer then bisects
-                    between code and paper, hour by hour, to find why the loss
-                    diverged. Hundreds of cluster CPU hours wasted.
-                  </p>
-                  <p>
-                    With No Cap, within ~20 seconds, the polygraph flags the
-                    bias-correction omission with the exact residual
-                    m·β₁ᵗ/(1-β₁ᵗ). The engineer reads the residual, fixes the
-                    bug, ships the correct code. Zero cluster CPU hours wasted.
-                  </p>
-                </div>
               </FadeIn>
             </div>
 

@@ -10,19 +10,19 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "NoCap",
+  title: "NoCap.wiki",
   description: "AI agent polygraph for research-grade code.",
   icons: {
     icon: "/favicon.svg",
   },
   openGraph: {
-    title: "NoCap",
+    title: "NoCap.wiki",
     description: "AI agent polygraph for research-grade code.",
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
-    title: "NoCap",
+    title: "NoCap.wiki",
     description: "AI agent polygraph for research-grade code.",
   },
 };
