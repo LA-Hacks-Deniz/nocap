@@ -626,6 +626,172 @@ def extract_paper_claim(
     return out
 
 
+# ----------------------------------------------------------------------
+# T1.25 v3 pass 2 — function-focuser (re-rank, never drop)
+# ----------------------------------------------------------------------
+
+_FOCUS_SYSTEM = (
+    "You are a function-focuser. Given a canonical paper claim and the "
+    "source of a function-under-verification, REORDER claimed_equations "
+    "so the equation that defines the function's RETURN VALUE is FIRST, "
+    "intermediate computations next, notational definitions last. NEVER "
+    "drop equations from the input claim — only reorder them. The "
+    "orchestrator decides what to verify."
+)
+
+_FOCUS_INSTRUCTION = """
+### Task
+You are given:
+1. A canonical paper claim's `claimed_equations`, presented as a numbered
+   list with stable indices.
+2. The source of a Python function under verification.
+
+Decide a re-ranking that puts the equation defining the function's
+RETURN VALUE FIRST, intermediate computations next (in pipeline order),
+and notational / shorthand definitions last. The orchestrator iterates
+the ranked list — putting the function-defining equation first lets the
+matcher catch full-pipeline bugs (e.g. a missing scaling factor) rather
+than chasing intermediate symbols that hide context.
+
+### Output requirement
+Return ONLY a JSON object of the exact form:
+
+{
+  "order": [<integer index>, <integer index>, ...]
+}
+
+Constraints (STRICTLY enforced — violations cause your output to be
+discarded and the input order to be used unchanged):
+- `order` MUST be a PERMUTATION of `[0, 1, ..., N-1]` where N is the
+  number of input equations. Every input index appears EXACTLY ONCE.
+- Do NOT add new equations. Do NOT drop equations. Do NOT rewrite
+  equation strings.
+- Output JSON only — no prose, no markdown fences.
+
+### Ranking guide
+
+- **Function-defining equation (FIRST)**: the LHS is the function's
+  return value (or a synonym). Example: for `Adam.step()` returning
+  `theta`, the highest-priority equation is
+  `\\theta_t = \\theta_{t-1} - \\alpha \\hat{m}_t / ...`. For
+  `scaled_dot_product_attention(Q,K,V)`, it is
+  `Attention(Q,K,V) = softmax(QK^T / \\sqrt{d_k}) V`.
+- **Intermediate computations (next)**: equations whose LHS is a
+  variable the function explicitly assigns / computes en route to the
+  return — e.g. `m_t`, `v_t`, `\\hat{m}_t`, `\\hat{v}_t`, `scores`.
+- **Notational definitions (last)**: equations whose LHS defines paper
+  shorthand the function does NOT explicitly compute — e.g.
+  `\\bar{\\alpha}_t = \\prod_s \\alpha_s` (typically a precomputed
+  table looked up by index, not computed inline).
+
+### Worked example
+
+Input equations (indices [0..4]):
+  [0] m_t = \\beta_1 m_{t-1} + (1 - \\beta_1) g_t
+  [1] v_t = \\beta_2 v_{t-1} + (1 - \\beta_2) g_t^2
+  [2] \\hat{m}_t = m_t / (1 - \\beta_1^t)
+  [3] \\hat{v}_t = v_t / (1 - \\beta_2^t)
+  [4] \\theta_t = \\theta_{t-1} - \\alpha \\hat{m}_t / (\\sqrt{\\hat{v}_t} + \\epsilon)
+
+Function: `Adam.step(g, t)` returns `self.theta` after computing
+`m`, `v`, `m_hat`, `v_hat`, then updating `theta`.
+
+Correct output:
+```json
+{"order": [4, 2, 3, 0, 1]}
+```
+Reason: equation [4] is function-defining (theta is the return);
+[2] and [3] are the bias-correction intermediates closest to the
+return; [0] and [1] are the moment-update intermediates further back
+in the pipeline.
+
+WRONG output (drops equations):
+```json
+{"order": [4, 0, 1]}
+```
+You MUST keep every input index. Reordering only.
+"""
+
+
+def _format_function_for_focus(function_name: str, function_source: str) -> str:
+    """Render the function source as a labeled code block for the focuser."""
+    return (
+        f"### Function under verification: `{function_name}`\n\n"
+        f"```python\n{function_source.rstrip()}\n```\n"
+    )
+
+
+def _format_equations_for_focus(equations: list[str]) -> str:
+    """Render the input equations as an indexed list for the focuser."""
+    lines = ["### Paper claim equations (indices to reorder)"]
+    for i, eq in enumerate(equations):
+        lines.append(f"  [{i}] {eq}")
+    return "\n".join(lines)
+
+
+def focus_claim_to_function(
+    paper_claim: dict,
+    function_name: str,
+    function_source: str,
+) -> dict:
+    """Pass 2 of T1.25 v3: re-rank paper_claim's equations for a function.
+
+    Takes a paper_claim from :func:`extract_paper_claim` and a
+    function-under-verification source. Returns a NEW dict (paper_claim
+    is not mutated) with `claimed_equations` reordered so the
+    function-defining equation is first.
+
+    NEVER drops equations from the input. If the focuser's response is
+    invalid (not a permutation of input indices, parse error, etc.),
+    falls back to returning the input claim unchanged so the caller is
+    no worse off than the code-blind extraction.
+    """
+    equations = list(paper_claim.get("claimed_equations") or [])
+    n = len(equations)
+    if n <= 1:
+        # Nothing to reorder — pass through.
+        return dict(paper_claim)
+    user_prompt = (
+        _format_equations_for_focus(equations)
+        + "\n\n"
+        + _format_function_for_focus(function_name, function_source)
+        + _FOCUS_INSTRUCTION
+    )
+    print(
+        f"[spec.focus] prompt_chars={len(user_prompt)} "
+        f"est_tokens={len(user_prompt) // 4} n_equations={n}",
+        file=sys.stderr,
+    )
+    raw_text = client.call(
+        model="gemma-3-27b-it",
+        system=_FOCUS_SYSTEM,
+        user=user_prompt,
+        json_schema={"type": "object"},
+    )
+    repaired = _repair_latex_escapes(raw_text)
+    try:
+        raw = json.loads(repaired)
+        order = raw.get("order")
+        if not isinstance(order, list):
+            raise ValueError(f"order is not a list: {type(order).__name__}")
+        order_ints = [int(i) for i in order]
+        # Strict permutation check — guarantees never-drop semantics.
+        if sorted(order_ints) != list(range(n)):
+            raise ValueError(
+                f"order {order_ints} is not a permutation of [0..{n - 1}]"
+            )
+    except (json.JSONDecodeError, ValueError, TypeError) as e:
+        print(
+            f"[spec.focus] WARNING: invalid order ({type(e).__name__}: "
+            f"{str(e)[:200]}) — falling back to paper_claim unchanged.",
+            file=sys.stderr,
+        )
+        return dict(paper_claim)
+    out = dict(paper_claim)
+    out["claimed_equations"] = [equations[i] for i in order_ints]
+    return out
+
+
 if __name__ == "__main__":
     sample_code = (
         "def step(self, g, t, beta1=0.9, beta2=0.999, lr=1e-3, eps=1e-8):\n"
