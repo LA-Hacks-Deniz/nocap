@@ -170,7 +170,7 @@ That output proves the entire council works. No Slack, no frontend, no MCP — j
 
 ### T1.10 — `code.py` (Coder role, Gemma 4)
 
-- [ ] **@devin**
+- [~] **@devin — 2026-04-25 11:25**
 - **Deliverable**: `nocap_council/code.py` with `run_strategy(strategy, paper_extract, code_extract) -> evidence` that dispatches to `sympy_match` / `numerical_match` / `structural_match` based on strategy type. On failure, runs Critic prompt and returns `{evidence, critic_feedback, critic_score}`.
 - **Acceptance**: on Adam buggy, at least 2 of the 3 strategies return `evidence.equivalent=False` with specific residual / mismatch.
 - **Files touched**: `nocap-council/nocap_council/code.py`.
