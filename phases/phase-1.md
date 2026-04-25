@@ -217,7 +217,7 @@ That output proves the entire council works. No Slack, no frontend, no MCP — j
 
 ### T1.14 — `cli.py` (Click app)
 
-- [ ] **@devin**
+- [x] **@devin — 2026-04-25 16:30**
 - **Deliverable**: `nocap_council/cli.py` with Click command `nocap verify-impl <arxiv-id> <code-file> [--claim TEXT]`. Pretty-prints verdict with colors (use `rich`). Wires up to `nocap-council/pyproject.toml` as `[project.scripts] nocap = "nocap_council.cli:cli"` so `pip install -e .` exposes the `nocap` command.
 - **Acceptance**: `nocap verify-impl 1412.6980 ./adam_buggy.py` prints the verdict shown in this file's "Goal" section.
 - **Files touched**: `nocap-council/nocap_council/cli.py`, `nocap-council/pyproject.toml`.
