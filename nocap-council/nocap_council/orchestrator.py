@@ -1,4 +1,4 @@
-# Owner: DEVIN — Phase 1 task T1.13 (function-aware Spec + skip-retry under T1.22 + _return fallback under T1.24)
+# Owner: DEVIN — Phase 1 task T1.13 (function-aware Spec + skip-retry under T1.22 + _return fallback under T1.24 + paper_dict plumb-through under T1.25 v3)
 """Orchestrator — single-arm OptimAI loop tying the council together.
 
 End-to-end verification pipeline that consumes ``(paper_arxiv_id, code_str)``
@@ -105,7 +105,15 @@ from pathlib import Path
 from typing import Any
 
 from nocap_council import code as coder
-from nocap_council import code_extract, mongo_log, paper_extract, plan, spec
+from nocap_council import (
+    code_claim as code_claim_module,
+    code_extract,
+    mongo_log,
+    pair_match as pair_match_module,
+    paper_extract,
+    plan,
+    spec,
+)
 from nocap_council.plan import Strategy
 from nocap_council.polygraph import verify as polygraph_verify
 
@@ -492,6 +500,7 @@ def _strategy_evidence(
     function_source: str | None = None,
     function_name: str | None = None,
     strategy_idx: int | None = None,
+    pair_entries: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Run one ``Strategy``; for symbolic/numerical, iterate every claimed eq.
 
@@ -527,7 +536,40 @@ def _strategy_evidence(
         # var-miss).
         skipped: list[tuple[int, str, str]] = []
         last_ev: dict[str, Any] | None = None
+        # T1.25 v3 Stage 6: index pair-match verdicts by paper_index so
+        # we can gate ``GATED`` / ``UNMATCHED`` rows BEFORE asking the
+        # one-side matcher about them. Eliminates the false anomaly on
+        # external-contract equations like ``g_t = \nabla f(theta)``
+        # where ``g`` is a function parameter, not an internally
+        # computed local.
+        pair_by_index: dict[int, dict[str, Any]] = {}
+        for entry in pair_entries or []:
+            try:
+                pair_by_index[int(entry["paper_index"])] = entry
+            except (KeyError, ValueError, TypeError):
+                continue
         for i, raw_eq in enumerate(equations):
+            entry = pair_by_index.get(i)
+            if entry is not None:
+                verdict = entry.get("verdict")
+                if verdict == "GATED":
+                    # External contract — paper LHS is a function
+                    # parameter (e.g. ``g_t`` is passed in, not
+                    # computed). Skip cleanly with a tagged reason
+                    # so downstream debug can see the gate fired.
+                    skipped.append(
+                        (
+                            i,
+                            entry.get("paper_lhs_symbol") or "",
+                            "pair_match_gated_parameter",
+                        )
+                    )
+                    continue
+                # ``UNMATCHED`` rows fall through to the matcher's
+                # existing T1.24 ``_return`` fallback so paper
+                # equations whose LHS lives in the function's return
+                # expression (rather than a named local variable) can
+                # still be verified against the return value.
             eq = _normalize_equation(raw_eq)
             target = _heuristic_target_var(eq, code_env)
             # T1.24: ``_heuristic_target_var`` already has a T1.22-era
@@ -686,6 +728,7 @@ def verify(
             user_msg,
             function_name=function_name if function_source else None,
             function_source=function_source,
+            paper_dict=paper,
         )
     except Exception as exc:
         ms = int((time.perf_counter() - s0) * 1000)
@@ -715,6 +758,13 @@ def verify(
     )
 
     # Stage 3: plan
+    # T1.25 v3: Spec Pass-1 (code-blind) sends ~9k input tokens to Gemma 3 27B
+    # in a single call. Plan immediately follows with another 5–7k token call.
+    # Both stages share the gemma-3-27b-it 15k input-tokens-per-minute quota
+    # (free AND paid tier — Google does not raise Gemma rate limits with
+    # billing enabled). Without spacing, every verify-impl run trips a 429
+    # mid-pipeline. Sleep 50 s here so Plan starts a fresh quota window.
+    time.sleep(50)
     s0 = time.perf_counter()
     try:
         strategies = plan.generate_strategies(claim)
@@ -776,6 +826,44 @@ def verify(
         },
     )
 
+    # Stage 4b: code_claim (T1.25 v3 Stage 6 — symmetric structured
+    # extraction of the code's intent so the matcher can pair-match
+    # against the paper claim instead of iterating one-side).
+    code_claim_dict: dict[str, Any] = {}
+    pair_entries: list[dict[str, Any]] = []
+    try:
+        code_claim_dict = code_claim_module.extract_code_claim(
+            code_str, fn_name
+        ).to_dict()
+        entries = pair_match_module.pair_match(claim, code_claim_dict)
+        pair_entries = [e.to_dict() for e in entries]
+    except Exception as exc:
+        # Pair-match is advisory — failure here should not abort the
+        # pipeline. The matcher falls back to T1.22-era iteration.
+        _stage(
+            stream,
+            "code_claim",
+            "error",
+            0,
+            info={"error": str(exc)},
+        )
+    else:
+        verdicts = [e["verdict"] for e in pair_entries]
+        _stage(
+            stream,
+            "code_claim",
+            "ok",
+            0,
+            info={
+                "parameters": code_claim_dict.get("parameters", []),
+                "n_initial_conditions": len(code_claim_dict.get("initial_conditions", [])),
+                "n_computed": len(code_claim_dict.get("computed_equations", [])),
+                "n_paired": verdicts.count("PAIRED"),
+                "n_gated": verdicts.count("GATED"),
+                "n_unmatched": verdicts.count("UNMATCHED"),
+            },
+        )
+
     # Stage 5: code (run_strategy × N)
     # Inter-strategy backoff: when the previous strategy fired the
     # Critic, a fresh Gemma call from the next strategy can blow Gemma
@@ -796,6 +884,7 @@ def verify(
                 function_source=function_source,
                 function_name=fn_name,
                 strategy_idx=i,
+                pair_entries=pair_entries,
             )
         except Exception as exc:
             ms = int((time.perf_counter() - s0) * 1000)

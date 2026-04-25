@@ -282,6 +282,18 @@ That output proves the entire council works. No Slack, no frontend, no MCP — j
 - **Files touched**: `nocap-council/nocap_council/spec.py`, `nocap-council/nocap_council/orchestrator.py`.
 - **Hours**: 2
 
+### T1.25 — Decoupled Spec (v3): split paper-claim extraction from function focusing (post-T1.24 follow-up)
+
+- [~] **@devin — 2026-04-25 23:00 (v3)**
+- **Deliverable (v3 — architectural fix)**: split single-shot `extract_claim` into two LLM passes. Pass 1 (`extract_paper_claim`) is **code-BLIND** — takes only `arxiv_id` + `paper_extract.parse_paper` output and lists every equation the paper defines. Pass 2 (`focus_claim_to_function`) takes pass-1's claim + the function-under-verification source and **re-ranks only, never drops** equations. Public `extract_claim` API gains an internal optional `paper_dict` kwarg; orchestrator plumbs it through to avoid re-fetching. The new flow eliminates Gemma's code-driven bias on equation extraction.
+- **Why**: T1.25 v1 (OMIT-rule tightening) and v2 (Path A revert) both failed in live testing. adam_buggy's claim returns only [theta_t, m_t, v_t] (n_equations=3) — Gemma drops `\hat{m}_t` / `\hat{v}_t` based on the buggy code body (`m_hat = self.m`, no division), inferring "the code doesn't compute bias correction → don't list it as a paper claim." All three of [theta_t, m_t, v_t] are self-referential update rules, so the orchestrator's self-ref skip empties the matcher set and numerical strategy falls through to a generic `[VIGIL flag]` panel. The bias-correction equations are the ONLY non-self-referential equations in Adam's pipeline; without them the demo's rich `[numerical] m_hat mismatch / Residual: -beta1**t*m/(beta1**t-1)` evidence cannot be reconstructed. The bias is in the combined paper+code prompt itself; no prompt-text tweak can override it. Decoupling is the architectural fix.
+- **Acceptance (gating, three checkpoints)**:
+  - **Checkpoint 1**: standalone `extract_paper_claim('1412.6980', paper_dict)` returns a `claimed_equations` list containing `\hat{m}_t = m_t / (1 - \beta_1^t)` (the bias-correction equation must be present).
+  - **Checkpoint 2**: `focus_claim_to_function(paper_claim, 'step', adam_buggy_step_src)` returns the SAME equation set as paper_claim (no drops); claim2 should put theta_t / m_hat / v_hat in the top 3.
+  - **Checkpoint 3**: `make smoke-adam` exit 0 AND adam_buggy's anomaly panel shows `[numerical] m_hat mismatch` with sympy residual + critic feedback (NOT generic `[VIGIL flag]`).
+- **Files touched**: `nocap-council/nocap_council/spec.py`, `nocap-council/nocap_council/orchestrator.py`.
+- **Hours**: 2
+
 ### T1.17 — Sponsor track wiring (Gemma 4 + GoDaddy + Atlas seeds)
 
 - [ ] **@user** (manual setup steps; agents can't do these)
