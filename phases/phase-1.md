@@ -240,7 +240,7 @@ That output proves the entire council works. No Slack, no frontend, no MCP — j
 
 ### T1.16 — Smoke test on Adam fixtures
 
-- [~] **@devin — 2026-04-25 16:40**
+- [x] **@devin — 2026-04-25 16:40**
 - **Deliverable**: a `Makefile` target `make smoke-adam` that runs `nocap verify-impl 1412.6980 benchmark/implementations/adam_clean.py` and `... adam_buggy.py` and asserts the verdicts.
 - **Acceptance**: `make smoke-adam` exits 0 on both and prints the pretty verdicts.
 - **Files touched**: `Makefile`.
