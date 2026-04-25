@@ -282,6 +282,16 @@ That output proves the entire council works. No Slack, no frontend, no MCP — j
 - **Files touched**: `nocap-council/nocap_council/spec.py`, `nocap-council/nocap_council/orchestrator.py`.
 - **Hours**: 2
 
+### T1.25 — Remove Spec OMIT rule; rely on orchestrator guardrail (Path A, post-T1.24 follow-up)
+
+- [~] **@devin — 2026-04-25 22:30**
+- **Deliverable (Path A)**: `spec.py` `_JSON_INSTRUCTION` removes T1.24's "OMIT pure notational-definition equations" bullet entirely. Keeps the `### Equation ranking — REQUIRED (function-aware runs)` section with HIGHEST/LOWER/LOWEST priority list. Also corrects the LOWEST-priority example (was `\hat{m}_t \equiv m_t / (1-\beta_1^t)`, which is actually a computed intermediate in Adam — replaced with `\sigma_t^2 = \beta_t \cdot (1-\bar{\alpha}_{t-1})/(1-\bar{\alpha}_t)`, a true notational shorthand). Notational defs now flow through Spec; the orchestrator's T1.24 `i > 0 + target == _return` guardrail filters them at the matcher level deterministically.
+- **Why**: T1.25 v1 (OMIT rule tightening with explicit KEEP carve-outs for `m_hat` / `v_hat`) failed in live testing. Gemma still dropped `\hat{m}_t` / `\hat{v}_t` from `adam_buggy`'s `claimed_equations[]` (n_equations=3 instead of 5), reducing the anomaly panel to the generic `[VIGIL flag]` fallback instead of the rich `[numerical] m_hat mismatch / Residual: -beta1**t*m/(beta1**t-1)` evidence. Root cause: any prompt-level OMIT rule that mentions greek-subscript LHS examples leaks into Gemma's classification of all-greek-subscript LHSes as omittable, regardless of KEEP carve-outs. Path A removes the leaky layer entirely. The orchestrator guardrail handles the original q_sample-clean false-anomaly bug deterministically.
+- **Acceptance (gating)**: `make smoke-adam` exits 0 AND `adam_buggy`'s anomaly panel shows `[numerical] m_hat mismatch` with a sympy residual + critic feedback (NOT generic `[VIGIL flag]`).
+- **Acceptance (deferred to post-merge live testing)**: (a) DDPM q_sample buggy → anomaly with sqrt residual, (b) DDPM q_sample clean → pass (T1.24 regression fix preserved), (c) attention_buggy → anomaly with sqrt(d_k) residual, (d) attention_clean → pass.
+- **Files touched**: `nocap-council/nocap_council/spec.py`.
+- **Hours**: 1
+
 ### T1.17 — Sponsor track wiring (Gemma 4 + GoDaddy + Atlas seeds)
 
 - [ ] **@user** (manual setup steps; agents can't do these)
