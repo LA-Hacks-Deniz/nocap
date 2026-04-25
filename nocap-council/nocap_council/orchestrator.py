@@ -555,8 +555,7 @@ def _strategy_evidence(
                 if verdict == "GATED":
                     # External contract — paper LHS is a function
                     # parameter (e.g. ``g_t`` is passed in, not
-                    # computed). Skip cleanly with a tagged reason
-                    # so downstream debug can see the gate fired.
+                    # computed).
                     skipped.append(
                         (
                             i,
@@ -565,11 +564,19 @@ def _strategy_evidence(
                         )
                     )
                     continue
-                # ``UNMATCHED`` rows fall through to the matcher's
-                # existing T1.24 ``_return`` fallback so paper
-                # equations whose LHS lives in the function's return
-                # expression (rather than a named local variable) can
-                # still be verified against the return value.
+                if verdict == "UNMATCHED":
+                    # T1.26 pair-match v2: any UNMATCHED row at this
+                    # point either had no code-side LHS counterpart
+                    # AND lost (or was never in) the return-value
+                    # Jaccard contest. Skip cleanly.
+                    skipped.append(
+                        (
+                            i,
+                            entry.get("paper_lhs_symbol") or "",
+                            "pair_match_unmatched",
+                        )
+                    )
+                    continue
             eq = _normalize_equation(raw_eq)
             target = _heuristic_target_var(eq, code_env)
             # T1.24: ``_heuristic_target_var`` already has a T1.22-era
