@@ -2,8 +2,8 @@
 
 Variant of Claude-Code-generated DDPM implementation
 (clean: as-shipped | buggy: planted bias-correction omission in q_sample's mean).
-This file is the CLEAN variant — `q_sample` uses `self.sqrt_bar_alphas` per eq. (4),
-matching the as-shipped Claude Code implementation.
+This file is the CLEAN variant — `q_sample` correctly uses `self.sqrt_bar_alphas`
+in the mean per eq. (4).
 
 Implements:
   * Forward process  q(x_t | x_0)              — eq. (4)
