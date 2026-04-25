@@ -246,6 +246,20 @@ Phase 3 ships when a judge can hit `nocap.wiki` from their phone and watch a liv
 - **When to do this**: only if the hackathon judging is over and you're keeping nocap.wiki running for the Harvard pilot. Not needed for the demo itself (cloudflared is sufficient).
 - **Reference**: `research.md [H5]` Part A §3 (full DO App Platform spec).
 
+### T3.21 — Landing page MVP (localhost only)
+
+- [~] **@devin** — 2026-04-25 19:32
+- **Deliverable**: `nocap-frontend/` localhost-perfect single-page landing site for the hackathon judging demo. Includes sticky nav, hero wordmark with cap emoji on the `p`, cursor-reactive dot canvas with mobile static fallback, "What it does" copy + Slack mockup, monochrome sponsors/tracks row, and footer links. Uses Next.js 15 App Router, Tailwind v4, shadcn/ui, `motion`, React 19, and Inter via `next/font/google`.
+- **Acceptance**:
+  1. `cd nocap-frontend && npm run dev` serves at `localhost:3000` with all 5 sections rendering, dot canvas animating on desktop, and hero wordmark cap emoji correctly positioned over the `p`.
+  2. `cd nocap-frontend && npm run build && npm run start` succeeds.
+  3. Lighthouse mobile run on local returns Performance ≥ 90, Accessibility 100, Best Practices 100, SEO 100.
+  4. Visual screenshots of each section at iPhone 14 viewport are pasted in the PR body.
+- **Files touched**: `nocap-frontend/**`, `phases/phase-3.md`.
+- **Hours**: 4
+- **Reference**: User-provided inline Design System + Devpost "What it does" brief in Devin session.
+- **Non-goals**: no Vercel deploy, no DNS work, no Slack gateway/live trace viewer/verdict modal.
+
 ---
 
 ## Phase 3 — done when
