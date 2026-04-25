@@ -264,6 +264,15 @@ That output proves the entire council works. No Slack, no frontend, no MCP — j
 - **Files touched**: `nocap-council/nocap_council/spec.py`, `nocap-council/nocap_council/orchestrator.py`, `nocap-council/nocap_council/cli.py`, `benchmark/implementations/ddpm_claude_clean.py` (new fixture).
 - **Hours**: 4
 
+### T1.23 — LLM-as-judge fallback for non-symbolic-matchable equations (post-T1.22 follow-up)
+
+- [~] **@devin — 2026-04-25 18:45**
+- **Deliverable**: (1) New `code._run_llm_judge(paper_equation, code_expr, target_var, function_source) -> dict` — single Gemma call returning `{equivalent, residual, reasoning, method_used="llm_judge"}`. Defensive parse, NOCAP_OFFLINE-gated stub. (2) Wired into `_run_symbolic` and `_run_numerical` as a fallback when the matcher result is non-actionable. Four trigger conditions: (a) `method_used=="failed"`, (b) error message contains "not found" / "KeyError", (c) symbolic result `equivalent=False, method_used=="failed"` (no clean residual), (d) NEW: numerical's `equivalent=True` is unreliable when `code_expr.atoms(sp.Function)` contains symbols not native to SymPy (opaque calls like `_gather`, `randn_like` cancel symmetrically in `subs(...)` and produce false-passes). When trigger (d) fires, set evidence `method_used="numerical_unreliable"` pre-judge so the trace shows WHY the judge ran. (3) Thread `function_source` through `orchestrator._strategy_evidence` → `code.run_strategy(..., function_source=...)`. (4) `polygraph` treats `method_used="llm_judge"` as a strong signal (same weight as symbolic/numerical with no mismatches — the existing 1.0-severity branch already covers this). (5) `cli.py` renders `[symbolic→llm_judge]` / `[numerical→llm_judge]` in the strategy panel header and surfaces the judge's `reasoning` field alongside Critic feedback.
+- **Why**: T1.22's q_sample-buggy verdict flakes between `anomaly` and `pass` because numerical strategy treats unknown functions (`_gather`, `randn_like`) as opaque atoms that cancel symmetrically; `subs()` lies. A deterministic LLM judge call as a fallback (~800 input tokens, 1 call per failing strategy) eliminates the flake and unlocks distribution-form / notation-drift cases generally.
+- **Acceptance**: (1) `make smoke-adam` still exits 0 with NO `method_used="llm_judge"` entries (Adam is symbolic-matchable; judge shouldn't fire). (2) Live DDPM `q_sample` (buggy) → `verdict=anomaly`, confidence > 0.85, `method_used="llm_judge"` on the catching evidence, reasoning explicitly mentions the `bar_alphas` vs `sqrt_bar_alphas` swap. (3) Live DDPM `q_sample` (clean) → `verdict=pass`, judge reasoning confirms reparameterization equivalence.
+- **Files touched**: `nocap-council/nocap_council/code.py`, `nocap-council/nocap_council/orchestrator.py`, `nocap-council/nocap_council/cli.py`, possibly `nocap-council/nocap_council/polygraph.py` (only if the 1.0-severity branch needs adjustment for `llm_judge`).
+- **Hours**: 3
+
 ### T1.17 — Sponsor track wiring (Gemma 4 + GoDaddy + Atlas seeds)
 
 - [ ] **@user** (manual setup steps; agents can't do these)
