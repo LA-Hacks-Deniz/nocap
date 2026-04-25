@@ -184,14 +184,12 @@ When a phase is done, the phase doc updates this table.
 | `nocap-council/github_fetch.py` | Claude | Phase 2 |
 | `nocap-gateway/src/main.rs` | Claude | Phase 2 |
 | `nocap-gateway/src/routes/*.rs` | Claude | Phase 2 |
-| `nocap-gateway/src/routes/voice.rs` | Devin | Phase 2 |
 | `nocap-mcp/src/main.rs` | Claude | Phase 2 |
 | `nocap-frontend/src/components/canvas/DotBackground.tsx` | Devin | Phase 3 |
 | `nocap-frontend/src/components/trace/SideBySideViewer.tsx` | Devin | Phase 3 |
 | `nocap-frontend/src/app/page.tsx` (landing) | Devin | Phase 3 |
 | `nocap-frontend/src/app/trace/[id]/page.tsx` | Devin | Phase 3 |
 | `nocap-frontend/everything else` | Claude | Phase 3 |
-| `do/app.yaml` | Claude | Phase 2 |
 | `slack/manifest.yaml` | User | Phase 2 |
 | `benchmark/manifest.yaml` + `implementations/*` | Devin + User | Phase 1 stretch |
 

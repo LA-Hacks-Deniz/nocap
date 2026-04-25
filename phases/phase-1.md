@@ -314,7 +314,7 @@ That output proves the entire council works. No Slack, no frontend, no MCP — j
 - **MLH × GoDaddy**: `nocap.wiki` registered (proof: domain resolves).
 - **Cognition Augment-the-Agent**: working CLI verifier of paper implementations (the entire phase).
 
-(MongoDB / DigitalOcean / ElevenLabs / Arista signals land in Phase 2 + 3.)
+(MongoDB / DigitalOcean / Arista signals land in Phase 2 + 3.)
 
 ---
 

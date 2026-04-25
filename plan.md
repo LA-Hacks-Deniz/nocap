@@ -25,7 +25,7 @@
 
 - **Domain**: `nocap.wiki` (registered via GoDaddy, code `MLHLAH26`)
 - **Tagline**: *"No Cap — does the code match the paper?"*
-- **Tracks**: Cognition Augment-the-Agent ($3K + ACUs + Windsurf Pro), MLH × {Gemma 4, DigitalOcean, GoDaddy, ElevenLabs}, Arista
+- **Tracks**: Cognition Augment-the-Agent ($3K + ACUs + Windsurf Pro), MLH × {Gemma 4, GoDaddy, MongoDB Atlas}, Figma Flicker to Flow, Arista
 - **Validated on tape** by Cognition rep at LA Hacks 2026 workshop ([transcript](../20 - Research/Workshops/2026-04-24 Cognition Workshop Transcript.md) lines 1206–1214)
 
 **Architecture**: single-writer, three-judge council (per Walden Yan, Apr 22 2026). One Code agent writes; Spec, Plan, Polygraph judge.
@@ -35,7 +35,7 @@
 - **Gemini 2.5 Flash-Lite** — Spec (cheap NLU)
 - Single API key from Google AI Studio fresh project, billing OFF
 
-**Backend stack**: Rust (Axum gateway + rmcp MCP + slack-morphism Slack bot), Python (council orchestrator + sympy/AST matchers), MongoDB Atlas (traces), DigitalOcean App Platform (hosting + Gradient AI embeddings), ElevenLabs (voice).
+**Backend stack**: Rust (Axum gateway + rmcp MCP + slack-morphism Slack bot), Python (council orchestrator + sympy/AST matchers), MongoDB Atlas (traces). Hosting: cloudflared tunnel from laptop → `nocap.wiki` for the hackathon demo (DO App Platform deferred to Phase 3 as optional).
 
 **Frontend stack**: Next.js 15, Tailwind v4, shadcn/ui + Aceternity, motion, KaTeX. Locked to `Design System.md`.
 
@@ -100,9 +100,7 @@ nocap-repo/
 │   │   ├── polygraph.py               # VIGIL Verifier (Gemma 4)
 │   │   ├── orchestrator.py            # top-level Spec → Plan → Code → Polygraph
 │   │   ├── mongo_log.py               # MongoDB Atlas trace logger
-│   │   ├── gradient_embeddings.py     # DigitalOcean Gradient AI embeddings
 │   │   ├── github_fetch.py            # PR API → diff + new-file contents
-│   │   ├── voice_text.py              # verdict → ElevenLabs-friendly text
 │   │   ├── prompts/                   # verbatim prompts from OptimAI + VIGIL papers
 │   │   │   ├── formulator.txt
 │   │   │   ├── planner.txt
@@ -123,7 +121,6 @@ nocap-repo/
 │   │   │   ├── verify.rs              # POST /verify-impl
 │   │   │   ├── stream.rs              # WS /stream/:trace_id
 │   │   │   ├── slack.rs               # POST /slack-event + /slack-action
-│   │   │   ├── voice.rs               # GET /voice/:trace_id (ElevenLabs proxy)
 │   │   │   └── trace.rs               # GET /trace/:id (replay)
 │   │   ├── middleware/
 │   │   │   └── slack_sig.rs
@@ -204,7 +201,7 @@ nocap-repo/
 
 ### Phase 2: Slack integration
 
-**Goal**: `/nocap verify-impl <pr-url>` in Slack returns a threaded reply with verdict + voice playback button + `[View Trace]` button.
+**Goal**: `/nocap verify-impl <pr-url>` in Slack returns a threaded reply with verdict + `[View Trace]` button.
 
 **See `phases/phase-2.md`** for task breakdown.
 
@@ -285,9 +282,9 @@ When any phase produces a sponsor-touching artifact, the agent that wrote the co
 |---|---|---|
 | **Cognition Augment-the-Agent** | Tool that makes AI coding agents measurably more capable | Whole project + benchmark numbers + dogfood capture |
 | **MLH × Gemma 4** | Use Gemma 4, free via AI Studio billing-OFF | `nocap-council/client.py` |
-| **MLH × DigitalOcean** | Backend on DO + Gradient AI prioritized | `do/app.yaml` + `nocap-council/gradient_embeddings.py` |
 | **MLH × GoDaddy Registry** | Punny domain via code `MLHLAH26` | `nocap.wiki` registered |
-| **MLH × ElevenLabs** | Use ElevenLabs | `nocap-gateway/src/routes/voice.rs` + Slack/dashboard buttons |
+| **MLH × MongoDB Atlas** | Cloud Atlas trace store (not local) | `nocap-council/mongo_log.py` |
+| **Figma Flicker to Flow** | Friction-into-function for ML researchers | Devpost narrative + landing page design |
 | **Arista Networks** | Web/mobile/desktop app | `nocap-frontend/` deployed at `nocap.wiki` |
 
 ---
@@ -307,7 +304,6 @@ When any phase produces a sponsor-touching artifact, the agent that wrote the co
 | MongoDB Atlas: allowlist `0.0.0.0/0` for hackathon (App Platform has no static egress IP) | `do/app.yaml` | `[H5]` §18, `[H7]` A.1 |
 | Vercel cannot host long-lived WebSockets — proxy to DO `wss://` | `nocap-frontend/src/lib/ws.ts` | `[H6]` §12 |
 | KaTeX `throwOnError: true` crashes the page on bad equations — set `false` | `nocap-frontend/src/lib/katex-render.ts` | `[H6]` §6 |
-| Slack `files.upload` is sunset — use the 2-step `files.getUploadURLExternal` + `files.completeUploadExternal` | `nocap-gateway/src/routes/voice.rs` | `[H7]` C.5 |
 | GitHub PR API: 60 req/hr unauthenticated — always set `GITHUB_TOKEN` | `nocap-council/github_fetch.py` | `[H7]` B.3 |
 
 ---

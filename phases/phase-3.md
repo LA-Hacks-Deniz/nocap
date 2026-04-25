@@ -11,7 +11,7 @@ End-to-end visual story:
 1. Visitor lands at `nocap.wiki` — large `~` logo, tagline "does the code match the paper?", interactive cursor-reactive dot canvas, paper URL + code paste form.
 2. Submit → redirect to `/trace/:id` — live WebSocket dashboard with 4 council cards (Spec / Plan / Code / Polygraph) animating in as the council progresses.
 3. Side-by-side viewer: KaTeX-rendered paper math (left) ↔ syntax-highlighted code (right). Mismatched equations rendered in **bold weight** (no color — per Design System).
-4. Final verdict modal: confidence band (Bold / Medium / Regular weight), per-equation pass/fail, voice playback button (ElevenLabs).
+4. Final verdict modal: confidence band (Bold / Medium / Regular weight), per-equation pass/fail.
 5. `/results` shows past verifications.
 
 Phase 3 ships when a judge can hit `nocap.wiki` from their phone and watch a live verification in real time.
@@ -167,8 +167,8 @@ Phase 3 ships when a judge can hit `nocap.wiki` from their phone and watch a liv
 ### T3.13 — `VerdictModal.tsx`
 
 - [ ] **@claude**
-- **Deliverable**: `nocap-frontend/src/components/trace/VerdictModal.tsx`. Modal with `motion` AnimatePresence. Confidence band as **typographic weight** (Bold for >0.8, Medium for 0.5-0.8, Regular below) — never color (per Design System §"What NOT to do"). Per-equation pass/fail list. Voice playback button → POSTs to `/voice/:trace_id`, plays returned MP3 inline.
-- **Acceptance**: passing a verdict object renders the modal with correct weight; voice button plays MP3.
+- **Deliverable**: `nocap-frontend/src/components/trace/VerdictModal.tsx`. Modal with `motion` AnimatePresence. Confidence band as **typographic weight** (Bold for >0.8, Medium for 0.5-0.8, Regular below) — never color (per Design System §"What NOT to do"). Per-equation pass/fail list.
+- **Acceptance**: passing a verdict object renders the modal with correct weight.
 - **Files touched**: `nocap-frontend/src/components/trace/VerdictModal.tsx`.
 - **Hours**: 1.5
 - **Reference**: `research.md [H6]` §11.
@@ -198,7 +198,7 @@ Phase 3 ships when a judge can hit `nocap.wiki` from their phone and watch a liv
 - **Files touched**: `nocap-frontend/vercel.json` (if needed).
 - **Hours**: 0.5
 - **Reference**: `research.md [H6]` §12.
-- **Critical**: WebSockets cannot terminate on Vercel. Frontend connects directly to `wss://api.nocap.wiki/stream/:id` (the DO backend). Add `api.nocap.wiki` as an ALIAS domain on the DO App Platform spec, configure cert.
+- **Critical**: WebSockets cannot terminate on Vercel. Frontend connects directly to `wss://nocap.wiki/stream/:id`, which the cloudflared tunnel routes to the laptop-hosted gateway. (If T3.X "migrate to DO App Platform" lands first, swap `nocap.wiki` for `api.nocap.wiki` and add the ALIAS domain to the DO spec.)
 
 ### T3.16 — Polish pass
 
@@ -215,7 +215,7 @@ Phase 3 ships when a judge can hit `nocap.wiki` from their phone and watch a liv
 ### T3.17 — Live frontend demo recording
 
 - [ ] **@user**
-- **Deliverable**: 60-second screen recording of the landing → verify form → live trace animation → verdict modal → voice playback. Saved to `docs/screenshots/phase3-frontend-demo.mp4`.
+- **Deliverable**: 60-second screen recording of the landing → verify form → live trace animation → verdict modal. Saved to `docs/screenshots/phase3-frontend-demo.mp4`.
 - **Acceptance**: recording exists and shows the polished UI with smooth animations.
 - **Hours**: 0.5
 
@@ -227,8 +227,7 @@ Phase 3 ships when a judge can hit `nocap.wiki` from their phone and watch a liv
   2. Paste arxiv ID + code.
   3. Watch trace page animate.
   4. See verdict modal.
-  5. Tap Play Voice; hear voice in phone speaker.
-- **Acceptance**: all 5 steps work without intervention.
+- **Acceptance**: all 4 steps work without intervention.
 - **Hours**: 0.25
 
 ### T3.19 — Phase 3 retrospective + Devpost prep
@@ -236,6 +235,16 @@ Phase 3 ships when a judge can hit `nocap.wiki` from their phone and watch a liv
 - [ ] **@user**
 - **Deliverable**: 3-bullet summary in `docs/PRIVATE-phase3-retro.md`. Devpost draft started using `../30 - Product/Pitch Deck.md` and the `Meta Patterns.md` template.
 - **Hours**: 0.5
+
+### T3.20 — (OPTIONAL) Migrate hosting to DigitalOcean App Platform
+
+- [ ] **@claude**
+- **Deliverable**: `do/app.yaml` with `nocap-gateway` (web, port 8080) + `nocap-council` (worker) + Mongo external + domain `nocap.wiki`. All env vars + secrets configured. Replaces the cloudflared-from-laptop hosting (Phase 2 T2.2) for production-grade uptime.
+- **Acceptance**: `doctl apps create --spec do/app.yaml` succeeds, `nocap.wiki/health` returns "ok" within 10 minutes from a clean DNS lookup. Cloudflared tunnel can be torn down after.
+- **Files touched**: `do/app.yaml`, `nocap-council/Dockerfile`, Cloudflare DNS (CNAME swap from tunnel → DO).
+- **Hours**: 2-3
+- **When to do this**: only if the hackathon judging is over and you're keeping nocap.wiki running for the Harvard pilot. Not needed for the demo itself (cloudflared is sufficient).
+- **Reference**: `research.md [H5]` Part A §3 (full DO App Platform spec).
 
 ---
 
@@ -252,9 +261,7 @@ Phase 3 ships when a judge can hit `nocap.wiki` from their phone and watch a liv
 ## Sponsor signals captured this phase
 
 - **Arista Networks**: polished web app at `nocap.wiki` (proof: live URL).
-- **MLH × ElevenLabs**: voice button works in dashboard verdict modal (proof: phase3-frontend-demo.mp4).
 - **MLH × Gemma 4** (refresh): mention in About page or footer.
-- **MLH × DigitalOcean** (refresh): WebSocket connects to `api.nocap.wiki` on DO.
 - **MLH × GoDaddy**: `nocap.wiki` (proof: any URL bar screenshot).
 
 ---

@@ -104,9 +104,19 @@ from pathlib import Path
 from typing import Any
 
 from nocap_council import code as coder
-from nocap_council import code_extract, paper_extract, plan, spec
+from nocap_council import code_extract, mongo_log, paper_extract, plan, spec
 from nocap_council.plan import Strategy
 from nocap_council.polygraph import verify as polygraph_verify
+
+
+def _persist_trace(out: dict[str, Any]) -> None:
+    """Best-effort Atlas write — never let a logging failure break a run."""
+    try:
+        out["trace_id"] = mongo_log.log_verdict(out)
+    except Exception as exc:
+        sys.stderr.write(f"[mongo_log] WARNING: log_verdict failed: {exc}\n")
+        sys.stderr.flush()
+        out["trace_id"] = None
 
 # ----------------------------------------------------------------------
 # Stream helpers
@@ -814,6 +824,7 @@ def verify(
         "arxiv_id": paper_arxiv_id,
         "function_name": fn_name,
     }
+    _persist_trace(out)
     _stage(
         stream,
         "done",
@@ -822,6 +833,7 @@ def verify(
         info={
             "verdict": out["verdict"],
             "confidence": out.get("confidence"),
+            "trace_id": out.get("trace_id"),
         },
     )
     return out
@@ -839,7 +851,7 @@ def _inconclusive(
     function_name: str | None = None,
 ) -> dict[str, Any]:
     elapsed = time.perf_counter() - t_start
-    return {
+    out: dict[str, Any] = {
         "verdict": "inconclusive",
         "confidence": 0.5,
         "evidence_summary": f"stage {stage_name!r} raised: {_last_tb_line(tb)}",
@@ -852,6 +864,8 @@ def _inconclusive(
         "function_name": function_name,
         "error": tb,
     }
+    _persist_trace(out)
+    return out
 
 
 # ----------------------------------------------------------------------

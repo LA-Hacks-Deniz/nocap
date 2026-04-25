@@ -1,6 +1,6 @@
 # Phase 2 — Slack integration
 
-*Active after Phase 1 ships. Goal: `/nocap verify-impl <github-pr-url>` in Slack returns a threaded reply with verdict + voice playback button + `[View Trace]` link.*
+*Active after Phase 1 ships. Goal: `/nocap verify-impl <github-pr-url>` in Slack returns a threaded reply with verdict + `[View Trace]` link.*
 
 ---
 
@@ -17,10 +17,8 @@ End-to-end Slack flow:
   Paper §4 (Adam): m̂_t = m_t / (1 - β1^t)
   Code lines 23–24 (PR #142): m_hat = self.m
   Bias correction missing.
-  [Replay trace] [Play voice] [Approve anyway]
+  [Replay trace] [Approve anyway]
 ```
-
-4. Click `[Play voice]` → ElevenLabs voice plays inline in Slack.
 
 Phase 2 ships when an engineer can `/nocap verify-impl <real-pr-url>` in Slack and get a verdict back without anyone touching the terminal.
 
@@ -49,39 +47,29 @@ Phase 2 ships when an engineer can `/nocap verify-impl <real-pr-url>` in Slack a
 - **Hours**: 0.5
 - **Reference**: `research.md [H4]` Part B §9.
 
-### T2.1 — Provision ElevenLabs
+### T2.2 — Cloudflared tunnel + nocap.wiki DNS
 
 - [ ] **@user**
-- **Deliverable**: ElevenLabs free-tier account, API key in `.env` as `ELEVENLABS_API_KEY`, voice ID in `.env` as `ELEVENLABS_VOICE_ID` (recommend `EXAVITQu4vr4xnSDxMaL` "Sarah" or `JBFqnCBsd6RMkjVDRZzb` "George").
-- **Acceptance**: `curl -H "xi-api-key: $ELEVENLABS_API_KEY" https://api.elevenlabs.io/v1/voices` returns 200.
-- **Hours**: 0.25
-- **Reference**: `research.md [H7]` Part C §1.
-
-### T2.2 — Provision DigitalOcean App Platform
-
-- [ ] **@user**
-- **Deliverable**: DO account with $200 MLH credit (signup via https://mlh.link/digitalocean-signup), `doctl` CLI installed locally, project `nocap` created in DO control panel, GitHub App installed on the `nocap-team/nocap` repo.
-- **Acceptance**: `doctl account get` succeeds; project `nocap` visible in dashboard.
-- **Hours**: 0.5
-- **Reference**: `research.md [H5]` §1.
-
-### T2.3 — Provision Gradient AI key
-
-- [ ] **@user**
-- **Deliverable**: in DO control panel → AI/ML → Model Access Keys → Create. Save as `.env` `GRADIENT_API_KEY` (`sk-do-v1-...`).
-- **Acceptance**: `curl -H "Authorization: Bearer $GRADIENT_API_KEY" -H "Content-Type: application/json" -d '{"model":"gte-large-en-v1.5","input":["test"]}' https://inference.do-ai.run/v1/embeddings` returns 200 with an embedding vector.
-- **Hours**: 0.25
-- **Reference**: `research.md [H5]` §10.
+- **Deliverable**:
+  1. Install `cloudflared` (`brew install cloudflared`).
+  2. Move `nocap.wiki` nameservers from GoDaddy to Cloudflare (Cloudflare → Add Site → free plan → Cloudflare gives you 2 nameservers; paste them into GoDaddy's DNS Nameservers panel). Propagation ~1-24h, but the tunnel works on the trycloudflare.com URL while you wait.
+  3. `cloudflared tunnel login` (browser auth) → `cloudflared tunnel create nocap` → returns a UUID.
+  4. Create `~/.cloudflared/config.yml` mapping `nocap.wiki` → `localhost:8787` (the gateway port).
+  5. `cloudflared tunnel route dns nocap nocap.wiki` (creates the CNAME on Cloudflare automatically).
+  6. `cloudflared tunnel run nocap` (leaves the tunnel up for the demo).
+- **Acceptance**: `curl https://nocap.wiki/health` returns 200 once the gateway is running locally and DNS has propagated. Until then, the trycloudflare URL works immediately.
+- **Hours**: 0.5 (signup + tunnel) + 1-24h DNS propagation in the background.
+- **Note**: production hosting (DO App Platform) moves to Phase 3 as optional. Cloudflared + laptop is the hackathon-grade demo path.
 
 ---
 
-## Task block A — Council secondary (parallelizable, 4 tasks)
+## Task block A — Council secondary (parallelizable, 2 tasks)
 
-> **Parallelism**: T2.4, T2.5, T2.6, T2.7 are independent.
+> **Parallelism**: T2.4, T2.5 are independent.
 
 ### T2.4 — `mongo_log.py`
 
-- [ ] **@claude**
+- [x] **@claude**
 - **Deliverable**: `nocap-council/nocap_council/mongo_log.py` with `init_trace`, `log_event`, `finalize`, `get_trace`. Schema follows Cognition Agent Trace format.
 - **Acceptance**: `python -c "from nocap_council.mongo_log import *; tid = init_trace('1412.6980', {'source':'test'}); log_event(tid, 'spec', {'foo':'bar'}); finalize(tid, {'verdict':'pass'}); print(get_trace(tid))"` round-trips.
 - **Files touched**: `nocap-council/nocap_council/mongo_log.py`.
@@ -98,28 +86,9 @@ Phase 2 ships when an engineer can `/nocap verify-impl <real-pr-url>` in Slack a
 - **Reference**: `research.md [H7]` Part B (complete drop-in module).
 - **Dependencies**: `unidiff`, `requests`. Note: ALWAYS set `GITHUB_TOKEN` in `.env`.
 
-### T2.6 — `gradient_embeddings.py`
-
-- [ ] **@claude**
-- **Deliverable**: `nocap-council/nocap_council/gradient_embeddings.py` with `embed`, `embed_batch`, `cosine`, `best_section` using DO Gradient AI via `openai` SDK pointed at `https://inference.do-ai.run/v1`.
-- **Acceptance**: `python -c "from nocap_council.gradient_embeddings import *; print(best_section('Adam optimizer', ['§3 Loss function', '§4 Optimization', '§5 Experiments']))"` returns `(1, <score>)` (the §4 match).
-- **Files touched**: `nocap-council/nocap_council/gradient_embeddings.py`.
-- **Hours**: 1
-- **Reference**: `research.md [H5]` §11 (complete drop-in module).
-- **Dependencies**: `openai` (used as a generic OpenAI-API-compatible client).
-
-### T2.7 — `voice_text.py`
-
-- [ ] **@devin**
-- **Deliverable**: `nocap-council/nocap_council/voice_text.py` with `render_verdict(verdict_dict) -> str` that produces ElevenLabs-friendly text (numbers spelled out, brand voice "no cap"/"cap detected").
-- **Acceptance**: pass a verdict dict, output is grammatically correct sentence ≤ 200 chars suitable for TTS.
-- **Files touched**: `nocap-council/nocap_council/voice_text.py`.
-- **Hours**: 0.5
-- **Reference**: `research.md [H7]` Part C §3.
-
 ---
 
-## Task block B — Rust gateway (sequential, 5 tasks)
+## Task block B — Rust gateway (sequential, 4 tasks)
 
 ### T2.8 — Gateway scaffold
 
@@ -144,21 +113,11 @@ Phase 2 ships when an engineer can `/nocap verify-impl <real-pr-url>` in Slack a
 - [ ] **@claude**
 - **Deliverable**: `nocap-gateway/src/routes/slack.rs` with two handlers:
   - Slash command: parses `/nocap verify-impl <pr-url>`, verifies signing secret, posts immediate ack ("🔍 Verifying… [view trace]"), spawns the verify flow async, posts final verdict to Slack via `chat.postMessage` (with thread_ts).
-  - Interactivity: parses button payload, dispatches on `action_id` (`view_trace` / `play_voice` / `approve_anyway`).
+  - Interactivity: parses button payload, dispatches on `action_id` (`view_trace` / `approve_anyway`).
 - **Acceptance**: typing `/nocap verify-impl https://github.com/foo/bar/pull/142` in the demo Slack workspace returns the threaded reply with the verdict within 30s.
 - **Files touched**: `nocap-gateway/src/routes/slack.rs`, `nocap-gateway/src/middleware/slack_sig.rs`.
 - **Hours**: 3
 - **Reference**: `research.md [H4]` Part B §10–§11. Critical: ack within 3s (use `tokio::spawn` for the verify flow).
-
-### T2.11 — `GET /voice/:trace_id` (ElevenLabs proxy)
-
-- [ ] **@devin**
-- **Deliverable**: `nocap-gateway/src/routes/voice.rs` that fetches the verdict from MongoDB by `trace_id`, runs `render_verdict(verdict)` (call into the Python module via subprocess OR re-implement in Rust), calls ElevenLabs TTS, returns MP3 bytes with `Content-Type: audio/mpeg`.
-- **Acceptance**: `curl localhost:8787/voice/<known-trace-id> > out.mp3 && file out.mp3` shows it's a valid MP3.
-- **Files touched**: `nocap-gateway/src/routes/voice.rs`.
-- **Hours**: 2
-- **Reference**: `research.md [H7]` Part C §2 (Rust snippet) + `research.md [H4]` §12.
-- **Cache**: hash verdict text → cache MP3 in MongoDB (gridfs OR base64 in trace doc) to avoid burning ElevenLabs free-tier credits during demo prep.
 
 ### T2.12 — `Dockerfile` for gateway
 
@@ -171,24 +130,7 @@ Phase 2 ships when an engineer can `/nocap verify-impl <real-pr-url>` in Slack a
 
 ---
 
-## Task block C — DigitalOcean deployment (sequential, 2 tasks)
-
-### T2.13 — `do/app.yaml` + first deploy
-
-- [ ] **@claude**
-- **Deliverable**: `do/app.yaml` with `nocap-gateway` (web, port 8080) + `nocap-council` (worker) + Redis (managed) + Mongo external + domain `nocap.wiki`. All env vars + secrets configured.
-- **Acceptance**: `doctl apps create --spec do/app.yaml` succeeds, `nocap.wiki/health` returns "ok" within 10 minutes.
-- **Files touched**: `do/app.yaml`, `nocap-council/Dockerfile`.
-- **Hours**: 2
-- **Reference**: `research.md [H5]` Part A §3 (complete spec).
-
-### T2.14 — Wire DNS (GoDaddy → DO)
-
-- [ ] **@user**
-- **Deliverable**: GoDaddy DNS for `nocap.wiki` pointed at the DO App Platform CNAME target.
-- **Acceptance**: `dig nocap.wiki` returns DO IP within 15 min; HTTPS auto-issues.
-- **Hours**: 0.25
-- **Reference**: `research.md [H5]` §6.
+> **Hosting note**: T2.2 (cloudflared tunnel) is the hackathon-grade hosting path. The gateway runs on the user's laptop; cloudflared exposes it via `nocap.wiki`. Production hosting on DigitalOcean App Platform is an optional Phase 3 task (see phase-3.md).
 
 ---
 
@@ -205,7 +147,7 @@ Phase 2 ships when an engineer can `/nocap verify-impl <real-pr-url>` in Slack a
 ### T2.16 — Live Slack demo
 
 - [ ] **@user**
-- **Deliverable**: terminal recording (or screen capture) of typing `/nocap verify-impl <real PR URL>` in Slack and seeing the threaded verdict + clicking Play Voice and hearing the verdict.
+- **Deliverable**: terminal recording (or screen capture) of typing `/nocap verify-impl <real PR URL>` in Slack and seeing the threaded verdict.
 - **Acceptance**: capture saved to `docs/screenshots/phase2-slack-demo.mp4`.
 - **Hours**: 0.5
 
@@ -219,19 +161,16 @@ Phase 2 ships when an engineer can `/nocap verify-impl <real-pr-url>` in Slack a
 
 ## Phase 2 — done when
 
-- [x] T2.0–T2.17 all checked
+- [ ] T2.0–T2.17 all checked
 - Slack demo recording exists
 - `nocap.wiki/health` returns 200 (gateway live on DO)
-- ElevenLabs voice plays in Slack
 - User signs off in T2.17
 
 ---
 
 ## Sponsor signals captured this phase
 
-- **MLH × DigitalOcean**: gateway hosted on DO App Platform; `gradient_embeddings.py` calls Gradient AI for embedding similarity (proof: `do/app.yaml` shows DO config + screenshot of dashboard).
-- **MLH × ElevenLabs**: `/voice/:trace_id` route works in Slack (proof: demo recording).
-- **MongoDB Atlas**: trace storage live (proof: dashboard screenshot showing `traces` collection populated).
+- **MongoDB Atlas**: trace storage live (proof: dashboard screenshot showing `traces` collection populated). Cloudflared tunnel exposes the laptop-hosted gateway at `nocap.wiki` for the demo.
 - **Cognition Augment-the-Agent**: same as Phase 1 + now Slack-native (sequential to swyx's "Slack is the killer agent UI").
 
 ---
