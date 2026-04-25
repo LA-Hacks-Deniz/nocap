@@ -1,4 +1,4 @@
-# Owner: DEVIN — Phase 1 task T1.13 (function-aware Spec + skip-retry under T1.22)
+# Owner: DEVIN — Phase 1 task T1.13 (function-aware Spec + skip-retry under T1.22 + _return fallback under T1.24)
 """Orchestrator — single-arm OptimAI loop tying the council together.
 
 End-to-end verification pipeline that consumes ``(paper_arxiv_id, code_str)``
@@ -54,7 +54,8 @@ caught — single-equation runs would miss one).
 T1.22 added skip-retry: equations whose ``target_var`` isn't in ``code_env``
 (or whose matcher returns ``not found``) are treated as non-comparable and
 skipped. The strategy's evidence carries a ``skipped_equations`` list of
-``(index, target)`` tuples; if every equation skips, the strategy returns
+``(index, target, reason)`` tuples (T1.24 widened from 2-tuple); if every
+equation skips, the strategy returns
 a synthetic ``equivalent=None, method_used="failed"`` evidence and the
 JSONL stream emits ``status="skipped"`` so polygraph treats it as no signal
 (neither pass nor anomaly contribution).
@@ -460,7 +461,7 @@ def _heuristic_var_map(equation: str, code_env: dict[str, Any]) -> dict[str, str
 
 
 def _synthetic_skipped_evidence(
-    kind: str, skipped: list[tuple[int, str]]
+    kind: str, skipped: list[tuple[int, str, str]]
 ) -> dict[str, Any]:
     """Build a no-signal evidence dict when every equation was skipped.
 
@@ -519,11 +520,32 @@ def _strategy_evidence(
                 strategy_idx=strategy_idx,
             )
         env_symbols = _all_symbols(code_env)
-        skipped: list[tuple[int, str]] = []
+        # T1.24: each ``skipped`` entry is a 3-tuple ``(equation_index,
+        # target_var, reason)`` so the JSONL stream and downstream
+        # debugging can distinguish *why* an equation was dropped
+        # (notational-def fallback vs. self-referential vs. matcher
+        # var-miss).
+        skipped: list[tuple[int, str, str]] = []
         last_ev: dict[str, Any] | None = None
         for i, raw_eq in enumerate(equations):
             eq = _normalize_equation(raw_eq)
             target = _heuristic_target_var(eq, code_env)
+            # T1.24: ``_heuristic_target_var`` already has a T1.22-era
+            # ``_return`` fallback that fires whenever the LHS symbol
+            # isn't in ``code_env`` — that bridges paper-side function
+            # definitions like ``Attention(Q,K,V) = ...`` to the code's
+            # return value. Spec equation-ranking (T1.24) makes that
+            # fallback safe and useful for the FIRST equation (the
+            # function-defining one), but it is structurally bogus for
+            # intermediate / notational-definition equations at i > 0
+            # whose LHS (e.g. ``\bar{\alpha}_t = \prod_s \alpha_s``)
+            # describes a different quantity than the function's
+            # return. Force-skip those: comparing ``_return`` against
+            # such an equation always yields a confidently-wrong
+            # ``equivalent=False`` from the matcher and judge.
+            if i > 0 and target == "_return":
+                skipped.append((i, target, "non-leading_return_fallback"))
+                continue
             if _is_self_referential(eq, target):
                 # Update-rule equation (LHS appears in RHS); we have no
                 # temporal indexing for ``code_env`` so the matcher can't
@@ -533,7 +555,7 @@ def _strategy_evidence(
             if not target or (target not in env_symbols and target not in code_env):
                 # Target variable absent from the function's env — not
                 # a comparable equation. Record + move on (T1.22).
-                skipped.append((i, target or ""))
+                skipped.append((i, target or "", "target_absent"))
                 continue
             var_map = _heuristic_var_map(eq, code_env)
             ev = coder.run_strategy(
@@ -559,7 +581,7 @@ def _strategy_evidence(
                 # Matcher-side symbol miss (e.g. var_map references a
                 # paper symbol that doesn't appear anywhere in code_env)
                 # AND the T1.23 judge didn't recover the equation. Skip.
-                skipped.append((i, target))
+                skipped.append((i, target, "matcher_var_not_found"))
                 continue
             if not ev.get("equivalent", True):
                 ev["skipped_equations"] = skipped

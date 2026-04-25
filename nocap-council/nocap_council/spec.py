@@ -1,4 +1,4 @@
-# Owner: CLAUDE — Phase 1 task T1.8 (refactored under T1.21 + T1.22 — DEVIN)
+# Owner: CLAUDE — Phase 1 task T1.8 (refactored under T1.21 + T1.22 + T1.24 — DEVIN)
 """Formulator role — extract the verification claim from a paper URL + code.
 
 Wraps `prompts/formulator.txt` (OptimAI Appendix B Formulator with paper-vs-code
@@ -144,6 +144,49 @@ field has no content, return an empty string or empty list, never null.
    alias even if the paper uses `\\beta_1`, `\\alpha`, `\\epsilon`, etc.
    The equation strings can keep the LaTeX form (`\\beta_1`).
 
+### Equation ranking — REQUIRED (function-aware runs)
+
+When a `Code function under verification:` block is provided in this
+prompt, RANK `claimed_equations` by how much of the function's behavior
+each equation describes:
+
+- **HIGHEST priority — function-defining equations.** The LHS is the
+  function's RETURN VALUE (or a synonym for it); the RHS is the full
+  pipeline that produces the return. Place these FIRST.
+  Example: `Attention(Q, K, V) = softmax(Q K^T / \\sqrt{d_k}) V` is
+  HIGHER priority than `scores = Q K^T` because `Attention(Q, K, V)`
+  is what `scaled_dot_product_attention` returns. The full formula
+  carries scaling, normalization, and post-processing details that
+  the intermediate equations drop.
+- **LOWER priority — intermediate assignments.** `scores = ...`,
+  `mu = ...`, `\\hat{m}_t = m_t / ...`. These describe partial
+  computations and may be missing context (e.g. `scores = Q K^T`
+  drops the `/\\sqrt{d_k}` scaling that lives in the full Attention
+  formula).
+- **LOWEST priority — notational definitions.**
+  `\\bar{\\alpha}_t = \\prod_{s=1}^{t} \\alpha_s`,
+  `\\hat{m}_t \\equiv m_t / (1 - \\beta_1^t)`. These are renames /
+  shorthand, not pipeline steps.
+
+Place equations in `claimed_equations[]` in DESCENDING priority order
+so the orchestrator iterates the most important ones first. Function-
+defining equations carry the most discriminating signal — if the code
+implementation has a bug, it is most likely to show up as a mismatch
+with the full formula, not the intermediates.
+
+- **OMIT pure notational-definition equations entirely on function-aware
+  runs.** Examples to OMIT (do NOT include these in `claimed_equations[]`
+  at all): `\\bar{\\alpha}_t = \\prod_{s=1}^{t} \\alpha_s`,
+  `\\sigma_t^2 = \\beta_t`, `\\hat{m}_t \\equiv m_t / (1 - \\beta_1^t)`,
+  any LHS that defines a symbolic shorthand used elsewhere rather than
+  computing a pipeline step inside the function under verification.
+  These equations describe NOTATION, not BEHAVIOR — comparing them to
+  the function's return value is structurally meaningless and produces
+  noise. They are LOWER than "lowest priority": they should not be
+  emitted at all on function-aware runs. Notational definitions are
+  fine to KEEP on whole-paper runs (no `Code function under verification`
+  block), where the matcher can resolve their LHS to a top-level symbol.
+
 ### Worked example — the Adam optimizer's update step
 Given a paper that defines (in §4 / Algorithm 1) the bias-corrected Adam
 step, the correct output is:
@@ -152,11 +195,11 @@ step, the correct output is:
 {
   "paper_section": "Algorithm 1",
   "claimed_equations": [
+    "\\theta_t = \\theta_{t-1} - \\alpha \\hat{m}_t / (\\sqrt{\\hat{v}_t} + \\epsilon)",
     "m_t = \\beta_1 m_{t-1} + (1 - \\beta_1) g_t",
     "v_t = \\beta_2 v_{t-1} + (1 - \\beta_2) g_t^2",
     "\\hat{m}_t = m_t / (1 - \\beta_1^t)",
-    "\\hat{v}_t = v_t / (1 - \\beta_2^t)",
-    "\\theta_t = \\theta_{t-1} - \\alpha \\hat{m}_t / (\\sqrt{\\hat{v}_t} + \\epsilon)"
+    "\\hat{v}_t = v_t / (1 - \\beta_2^t)"
   ],
   "claimed_function": "Adam optimizer parameter update step",
   "claimed_hyperparams": [
@@ -170,10 +213,53 @@ step, the correct output is:
 ```
 
 Note specifically:
-- `m_t = ... m_{t-1} ...` — current-state indexing, NOT `m_{t+1} = ... m_t ...`.
+- `\\theta_t = ...` is FIRST because `\\theta_t` is what Adam's `step()`
+  returns (the updated parameter). Bias-correction equations come
+  AFTER as lower-priority intermediates.
+- `m_t = ... m_{t-1} ...` — current-state indexing, NOT
+  `m_{t+1} = ... m_t ...`.
 - No `\\mathbf{m}` — plain `m`.
 - `beta1` / `beta2` / `lr` / `eps` as hyperparameter NAMES, even though
   the paper uses `\\beta_1` / `\\beta_2` / `\\alpha` / `\\epsilon`.
+
+### Worked example — scaled dot-product attention (Vaswani et al. 2017)
+Given a paper that defines (in §3.2.1, equation 1) scaled dot-product
+attention as `\\text{Attention}(Q, K, V) = \\text{softmax}(Q K^T / \\sqrt{d_k}) V`,
+and the function under verification is `scaled_dot_product_attention(Q, K, V)`,
+the CORRECT output is:
+
+```json
+{
+  "paper_section": "§3.2.1",
+  "claimed_equations": [
+    "Attention(Q, K, V) = softmax(Q K^T / \\sqrt{d_k}) V",
+    "scores = Q K^T / \\sqrt{d_k}",
+    "softmax(scores)_{ij} = \\exp(scores_{ij}) / \\sum_k \\exp(scores_{ik})"
+  ],
+  "claimed_function": "scaled dot-product attention",
+  "claimed_hyperparams": [],
+  "architecture_description": ""
+}
+```
+
+The WRONG output (which is what an unranked Spec produces) drops the
+function-defining formula entirely and leads with the intermediate:
+
+```json
+{
+  "claimed_equations": [
+    "scores = Q K^T",
+    "softmax(scores)",
+    "..."
+  ]
+}
+```
+
+The wrong version drops the `/\\sqrt{d_k}` scaling because the
+intermediate `scores = Q K^T` is not where the scaling lives — the
+scaling lives ONLY in the full `Attention(Q, K, V) = ...` formula.
+Always lead with the function-defining equation so the matcher sees
+the full pipeline.
 """
 
 
