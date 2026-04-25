@@ -179,7 +179,7 @@ That output proves the entire council works. No Slack, no frontend, no MCP — j
 
 ### T1.11 — `polygraph.py` (VIGIL Verifier, Gemma 4)
 
-- [~] **@devin — 2026-04-25 11:55**
+- [x] **@devin**
 - **Deliverable**: `nocap_council/polygraph.py` with three sub-functions:
   - `intent_anchor(user_msg, paper_extract) -> (S, C)` using Fig 5 prompt
   - `sanitize(claim) -> claim_clean` using Fig 6 prompt
