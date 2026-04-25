@@ -168,7 +168,15 @@ def _stage_status_line(event: dict[str, Any]) -> Text:
 
     if stage == "code" and "strategy_idx" in event:
         suffix_parts.append(f"strategy_idx={event['strategy_idx']}")
-        suffix_parts.append(f"kind={info.get('kind')}")
+        kind_label = info.get("kind")
+        # T1.23: when the LLM judge fired, annotate the kind label so the
+        # streaming line shows e.g. ``kind=numerical→llm_judge`` and the
+        # reader knows the verdict came from the fallback, not the matcher.
+        method_used = info.get("method_used")
+        judge_trigger = info.get("judge_trigger")
+        if isinstance(method_used, str) and method_used.startswith("llm_judge"):
+            kind_label = f"{kind_label}→{method_used}"
+        suffix_parts.append(f"kind={kind_label}")
         if status == "skipped":
             suffix_parts.append("(skipped — no comparable equation)")
             if info.get("n_skipped"):
@@ -179,6 +187,8 @@ def _stage_status_line(event: dict[str, Any]) -> Text:
                 suffix_parts.append(f"residual={info.get('residual_short')}")
             if info.get("n_skipped"):
                 suffix_parts.append(f"n_skipped={info.get('n_skipped')}")
+            if judge_trigger:
+                suffix_parts.append(f"judge_trigger={judge_trigger}")
             if info.get("critic_score") is not None:
                 suffix_parts.append(f"critic_score={info.get('critic_score')}")
         else:
@@ -249,15 +259,23 @@ def _render_anomaly(
             continue
         rendered_any = True
         kind = ev.get("kind", "?")
+        # T1.23: annotate the panel when the LLM judge fired so the
+        # reader can see the verdict came from the fallback path.
+        method_used = ev.get("method_used")
+        if isinstance(method_used, str) and method_used.startswith("llm_judge"):
+            kind = f"{kind}→{method_used}"
         idx, raw_eq = _equation_index(claim, code_env, ev)
         target = ev.get("target_var")
         residual = ev.get("residual")
         critic = _critic_summary(ev.get("critic_feedback"))
+        judge_reasoning = ev.get("judge_reasoning")
+        judge_trigger = ev.get("judge_trigger")
         eq_label = f"equation {idx}" if idx else "claim"
         line_no, line_src = _code_line_for(code_str, target)
 
         body = Text()
         eq_text = raw_eq or "(structural / hyperparametric — see mismatches below)"
+        body.append(f"[{kind}] ", style="bold magenta")
         body.append("Paper ", style="bold")
         body.append(f"{section}, {eq_label}: ", style="bold cyan")
         body.append(f"{eq_text}\n", style="white")
@@ -273,6 +291,10 @@ def _render_anomaly(
         elif critic:
             body.append("Critic: ", style="bold cyan")
             body.append(f"{critic}\n", style="dim italic")
+        if judge_reasoning:
+            trigger_note = f" (trigger={judge_trigger})" if judge_trigger else ""
+            body.append(f"Judge{trigger_note}: ", style="bold magenta")
+            body.append(f"{judge_reasoning}\n", style="italic")
 
         mismatches = ev.get("mismatches") or []
         if mismatches:
