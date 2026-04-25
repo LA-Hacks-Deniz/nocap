@@ -8,12 +8,16 @@ import { motion, useReducedMotion } from "motion/react";
 import { DotBackground } from "@/components/canvas/DotBackground";
 import { Button } from "@/components/ui/button";
 
+const SLACK_INVITE_URL =
+  "https://join.slack.com/t/no-cap-network/shared_invite/zt-3wbcqm94y-~sxkEgOkqN4diUZqn~x0GA";
+
 const NAV_LINKS = [
   { href: "https://github.com/LA-Hacks-Deniz/nocap", label: "GitHub" },
 ];
 
 const FOOTER_LINKS = [
   { href: "https://github.com/LA-Hacks-Deniz/nocap", label: "GitHub" },
+  { href: SLACK_INVITE_URL, label: "Demo workspace" },
 ];
 
 const SPONSORS = [
@@ -167,6 +171,22 @@ export function LandingPage() {
                     </li>
                   ))}
                 </ul>
+              </FadeIn>
+              <FadeIn delay={0.45}>
+                <Button
+                  asChild
+                  className="mt-10 h-11 rounded-full px-6 text-sm font-medium"
+                  size="lg"
+                  variant="outline"
+                >
+                  <Link
+                    href={SLACK_INVITE_URL}
+                    rel="noreferrer"
+                    target="_blank"
+                  >
+                    Join the demo workspace ↗
+                  </Link>
+                </Button>
               </FadeIn>
             </div>
 
