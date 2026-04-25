@@ -19,13 +19,17 @@ async fn health() -> &'static str {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Load repo-root .env. Walks parents from cwd; harmless if missing.
+    let _ = dotenvy::dotenv();
+
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
         .init();
 
     let app = Router::new()
         .route("/health", get(health))
-        .route("/verify-impl", post(routes::verify::verify_impl));
+        .route("/verify-impl", post(routes::verify::verify_impl))
+        .route("/slack-event", post(routes::slack::slack_event));
 
     let listener = tokio::net::TcpListener::bind(BIND_ADDR).await?;
     tracing::info!(addr = %BIND_ADDR, "nocap-gateway listening");

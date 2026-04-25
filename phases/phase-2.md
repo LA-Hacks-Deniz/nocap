@@ -110,7 +110,7 @@ Phase 2 ships when an engineer can `/nocap verify-impl <real-pr-url>` in Slack a
 
 ### T2.10 — `POST /slack-event` (slash command + interactivity)
 
-- [ ] **@claude**
+- [x] **@claude**
 - **Deliverable**: `nocap-gateway/src/routes/slack.rs` with two handlers:
   - Slash command: parses `/nocap verify-impl <pr-url>`, verifies signing secret, posts immediate ack ("🔍 Verifying… [view trace]"), spawns the verify flow async, posts final verdict to Slack via `chat.postMessage` (with thread_ts).
   - Interactivity: parses button payload, dispatches on `action_id` (`view_trace` / `approve_anyway`).

@@ -110,13 +110,25 @@ from nocap_council.polygraph import verify as polygraph_verify
 
 
 def _persist_trace(out: dict[str, Any]) -> None:
-    """Best-effort Atlas write — never let a logging failure break a run."""
+    """Best-effort Atlas write — never let a logging failure break a run.
+
+    If ``NOCAP_TRACE_ID`` is set in the environment (the Rust gateway
+    threads its uuid through this env var), we stamp it onto the doc
+    BEFORE the insert so the Slack handler can poll Mongo by that id.
+    Otherwise the inserted Mongo ``_id`` becomes the trace_id.
+    """
+    gateway_trace_id = os.environ.get("NOCAP_TRACE_ID")
+    if gateway_trace_id:
+        out["trace_id"] = gateway_trace_id
     try:
-        out["trace_id"] = mongo_log.log_verdict(out)
+        mongo_id = mongo_log.log_verdict(out)
+        if not gateway_trace_id:
+            out["trace_id"] = mongo_id
     except Exception as exc:
         sys.stderr.write(f"[mongo_log] WARNING: log_verdict failed: {exc}\n")
         sys.stderr.flush()
-        out["trace_id"] = None
+        if not gateway_trace_id:
+            out["trace_id"] = None
 
 # ----------------------------------------------------------------------
 # Stream helpers

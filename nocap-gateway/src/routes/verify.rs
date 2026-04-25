@@ -81,6 +81,10 @@ pub async fn verify_impl(Json(req): Json<VerifyReq>) -> Result<Json<VerifyResp>,
     if let Some(fn_name) = &req.function_name {
         cmd.args(["--function", fn_name]);
     }
+    // Thread the gateway-generated trace_id through to the orchestrator
+    // so the Mongo doc carries it as a queryable field (slack handler
+    // polls by trace_id).
+    cmd.env("NOCAP_TRACE_ID", &trace_id);
     // Detach stdio — orchestrator persists its verdict to Mongo, no need
     // to pipe stdout. Letting it inherit would tie the child to the gateway
     // terminal and break when run as a daemon.
