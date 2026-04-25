@@ -300,6 +300,19 @@ def _run_critic(
     return feedback, score
 
 
+def _section_match(mismatch_location: Any, claim_section: str) -> bool:
+    """Keep mismatches whose location is in ``claim_section`` (T1.13)."""
+    if not isinstance(mismatch_location, dict):
+        return False
+    sec = mismatch_location.get("paper_section")
+    if isinstance(sec, str) and sec == claim_section:
+        return True
+    algo = mismatch_location.get("paper_algorithm_name")
+    if isinstance(algo, str) and claim_section in algo:
+        return True
+    return False
+
+
 def run_strategy(
     strategy: Strategy,
     paper_extract: dict[str, Any],
@@ -308,10 +321,18 @@ def run_strategy(
     claim_equation: str | None = None,
     var_map: dict[str, str] | None = None,
     target_var: str | None = None,
+    claim_section: str | None = None,
 ) -> dict[str, Any]:
     """Dispatch a verification strategy and return an evidence dict.
 
     See module docstring for the evidence shape and arg requirements.
+
+    ``claim_section`` (added for T1.13) — when set, structural and
+    hyperparametric mismatches whose ``location.paper_section`` is
+    outside the claimed section are dropped before the equivalence
+    decision and the Critic call. This stops AdaMax-style sibling
+    sections from false-flagging a clean implementation (issue #3) and
+    keeps the Critic from firing on filtered-out noise.
     """
     kind = strategy.kind
     try:
@@ -345,6 +366,13 @@ def run_strategy(
         evidence["critic_feedback"] = feedback
         evidence["critic_score"] = score
         return evidence
+
+    if claim_section and kind in ("structural", "hyperparametric"):
+        kept = [
+            m for m in (evidence.get("mismatches") or []) if _section_match(m.get("location"), claim_section)
+        ]
+        evidence["mismatches"] = kept
+        evidence["equivalent"] = len(kept) == 0
 
     if not evidence["equivalent"]:
         feedback, score = _run_critic(strategy, paper_extract, evidence)
