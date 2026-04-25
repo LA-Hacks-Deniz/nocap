@@ -498,13 +498,19 @@ fn render_verdict_blocks(trace_id: &str, verdict: &Value) -> Value {
         }
     }
 
+    // T3.33: "View Issue" is a direct external link to the dashboard
+    // trace detail page. With `url` set, Slack opens the URL in a new
+    // tab and does NOT call back to /slack-event — the obsolete
+    // "view_trace" action_id handler was removed from
+    // handle_interactivity below.
     blocks.push(json!({
         "type": "actions",
         "elements": [
             {
                 "type": "button",
-                "text": {"type": "plain_text", "text": "Replay trace"},
-                "action_id": "view_trace",
+                "text": {"type": "plain_text", "text": "View Issue"},
+                "action_id": "view_issue",
+                "url": format!("https://nocap.wiki/trace/{}", trace_id),
                 "value": trace_id
             },
             {
@@ -551,8 +557,10 @@ async fn handle_interactivity(payload_json: &str) -> axum::response::Response {
         .and_then(|v| v.as_str())
         .map(String::from);
 
+    // T3.33 removed the "view_trace" action_id handler — the "View
+    // Issue" button now ships with a `url` field so Slack opens it as
+    // an external link and never round-trips here.
     let text = match action_id {
-        "view_trace" => format!("🔗 Trace: https://nocap.wiki/trace/{trace_id}"),
         "approve_anyway" => {
             tracing::warn!(user = %user, trace_id = %trace_id, "approve_anyway clicked");
             format!("✅ {user} approved trace `{trace_id}` anyway. Logged.")

@@ -35,6 +35,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/slack-event", post(routes::slack::slack_event))
         .route("/api/traces", get(routes::traces::list_traces))
         .route("/api/traces/:trace_id", get(routes::traces::get_trace))
+        .route("/api/traces/:trace_id/replay", post(routes::replay::replay_trace))
         .route("/api/papers/:arxiv_id/pdf", get(routes::traces::get_paper_pdf))
         // Permissive CORS for the hackathon — Vercel-hosted dashboard at
         // nocap.wiki calls api.nocap.wiki cross-origin. Tighten to

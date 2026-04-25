@@ -294,7 +294,7 @@ Phase 3 ships when a judge can hit `nocap.wiki` from their phone and watch a liv
 
 ### T3.23 — Gateway trace API endpoints
 
-- [~] **@devin** — 2026-04-25 23:47
+- [x] **@devin**
 - **Deliverable**: `nocap-gateway/src/routes/traces.rs` with three endpoints:
   - `GET /api/traces?limit=N&offset=N` — paginated list of trace summaries (trace_id, arxiv_id, function_name, verdict, confidence, paper_section, created_at). Default limit=50, max=200. Sorted by created_at desc.
   - `GET /api/traces/:trace_id` — full trace document from Mongo by trace_id.
@@ -310,7 +310,7 @@ Phase 3 ships when a judge can hit `nocap.wiki` from their phone and watch a liv
 
 ### T3.24 — Persist `code_str` in trace docs
 
-- [~] **@devin** — 2026-04-25 23:47
+- [x] **@devin**
 - **Deliverable**: update `mongo_log.log_verdict` and `orchestrator.verify` so the persisted trace document includes `code_str` (the raw Python source the gateway received). Currently the orchestrator's `verify()` doesn't carry `code_str` through to the augmented dict; needs a small refactor to plumb it through.
 - **Acceptance**: query a trace doc post-Slack-run via mongosh, confirm `code_str` field is present and non-empty (the original Python source the user pasted).
 - **Files touched**: `nocap-council/nocap_council/orchestrator.py` (add `code_str` to augmented dict), `nocap-council/nocap_council/mongo_log.py` (no change if it stores the dict verbatim).
@@ -338,7 +338,7 @@ Phase 3 ships when a judge can hit `nocap.wiki` from their phone and watch a liv
 
 ### T3.27 — Replay endpoint
 
-- [~] **@devin** — 2026-04-25 23:47
+- [x] **@devin**
 - **Deliverable**: `nocap-gateway/src/routes/replay.rs` with `POST /api/traces/:trace_id/replay`. Reads the trace doc from Mongo, extracts `arxiv_id` + `code_str` + `function_name` + `claim`, calls the existing `/api/verify-impl` endpoint internally (or directly spawns the council subprocess), returns the new `trace_id`.
 - **Acceptance**: `curl -X POST https://api.nocap.wiki/api/traces/<known-trace-id>/replay` returns `{"trace_id": "<new-uuid>"}` and a fresh trace doc lands in Mongo within 30s.
 - **Files touched**: `nocap-gateway/src/routes/replay.rs`, route mount in `main.rs`.
@@ -411,7 +411,7 @@ Phase 3 ships when a judge can hit `nocap.wiki` from their phone and watch a liv
 
 ### T3.33 — Slack "View Issue" button → trace detail page
 
-- [~] **@devin** — 2026-04-25 23:47
+- [x] **@devin**
 - **Deliverable**: update `nocap-gateway/src/routes/slack.rs` Block Kit verdict rendering:
   - Rename the "Replay trace" button to "View Issue"
   - Set its `url` field to `https://nocap.wiki/trace/<trace_id>` (Slack opens external URLs natively when `url` is set on a button — no `action_id` dispatch needed)
