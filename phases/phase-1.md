@@ -90,7 +90,7 @@ That output proves the entire council works. No Slack, no frontend, no MCP — j
 
 ### T1.3 — `paper_extract.py`
 
-- [ ] **@devin**
+- [x] **@devin**
 - **Deliverable**: `nocap_council/paper_extract.py` with `fetch_arxiv_source(arxiv_id) -> Path` and `parse_paper(source_dir) -> dict` returning `{section: {equations[], algorithms[], hyperparams{}, architecture[]}}`.
 - **Acceptance**: `python -c "from nocap_council.paper_extract import *; src=fetch_arxiv_source('1412.6980'); print(parse_paper(src))"` returns a dict with at least 4 equations and 1 algorithm for Adam.
 - **Files touched**: `nocap-council/nocap_council/paper_extract.py`.
