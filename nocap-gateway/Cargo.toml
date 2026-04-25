@@ -1,0 +1,18 @@
+# Owner: CLAUDE — Phase 2 task T2.8
+[package]
+name = "nocap-gateway"
+version = "0.1.0"
+edition = "2021"
+description = "No Cap perimeter gateway: Slack + verify-impl + stream-trace fronted by Axum."
+license = "MIT"
+
+[[bin]]
+name = "nocap-gateway"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+axum = "0.7"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }

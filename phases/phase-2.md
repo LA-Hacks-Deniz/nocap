@@ -92,7 +92,7 @@ Phase 2 ships when an engineer can `/nocap verify-impl <real-pr-url>` in Slack a
 
 ### T2.8 — Gateway scaffold
 
-- [ ] **@claude**
+- [x] **@claude**
 - **Deliverable**: `nocap-gateway/Cargo.toml` with deps + `src/main.rs` Axum server on `:8787` with `GET /health` returning "ok".
 - **Acceptance**: `cargo run -p nocap-gateway` then `curl localhost:8787/health` returns "ok".
 - **Files touched**: `nocap-gateway/Cargo.toml`, `nocap-gateway/src/main.rs`.
