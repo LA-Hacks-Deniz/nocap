@@ -248,7 +248,7 @@ Phase 3 ships when a judge can hit `nocap.wiki` from their phone and watch a liv
 
 ### T3.21 — Landing page MVP (localhost only)
 
-- [~] **@devin** — 2026-04-25 19:32
+- [x] **@devin** — 2026-04-25 20:36
 - **Deliverable**: `nocap-frontend/` localhost-perfect single-page landing site for the hackathon judging demo. Includes sticky nav, hero wordmark with cap emoji on the `p`, cursor-reactive dot canvas with mobile static fallback, "What it does" copy + Slack mockup, monochrome sponsors/tracks row, and footer links. Uses Next.js 15 App Router, Tailwind v4, shadcn/ui, `motion`, React 19, and Inter via `next/font/google`.
 - **Acceptance**:
   1. `cd nocap-frontend && npm run dev` serves at `localhost:3000` with all 5 sections rendering, dot canvas animating on desktop, and hero wordmark cap emoji correctly positioned over the `p`.
