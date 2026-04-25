@@ -1,29 +1,50 @@
-# Owner: DEVIN — Phase 1 task T1.25 (v3 — decoupled Spec, Stage 6: pair-match)
+# Owner: DEVIN — Phase 1 task T1.26 (LLM-based pair-match)
 """Pair-match a paper claim against a code claim.
 
 Bridges :func:`nocap_council.spec.extract_paper_claim` (paper side) and
 :func:`nocap_council.code_claim.extract_code_claim` (code side) by
-resolving each paper equation's LHS symbol to one of three buckets:
+resolving each paper equation to one of three buckets:
 
   * ``GATED`` — the LHS symbol is a function parameter on the code side
     (e.g. paper says ``g_t = \\nabla f(\\theta_{t-1})`` but the code's
     ``step`` receives ``g`` as input). External contract; not verifiable
     inside the function body.
 
-  * ``PAIRED`` — a code computed_equation has the same LHS symbol. The
-    matcher will run an equivalence check on the (paper_eq, code_eq)
-    pair (sympy first, then LLM-judge fallback at the layer above).
+  * ``PAIRED`` — a code computed_equation, initial_condition, or the
+    function's return value implements the paper equation. The matcher
+    will run an equivalence check on the (paper_eq, code_eq) pair.
 
-  * ``UNMATCHED`` — no code-side counterpart. Caller decides what to do
-    (typically: skip but record).
+  * ``UNMATCHED`` — paper-internal intermediate; no code-side
+    counterpart at all. Caller decides what to do (typically: skip).
 
-Pure deterministic logic. No LLM. The equivalence check itself stays in
-``sympy_match.py`` / ``code.py`` — this module only resolves PAIRS.
+Two-stage resolver:
+
+1. **LHS equality fast path** (deterministic, no LLM). For each paper
+   equation, if its LHS symbol matches a code parameter -> ``GATED``;
+   if it matches a code computed_equation LHS -> ``PAIRED``. This
+   resolves all six Adam equations with zero LLM cost.
+
+2. **LLM pair-match** for whatever the fast path defers (when the
+   function returns its result inline rather than naming a local LHS,
+   or when paper/code use different naming conventions). One Gemma call
+   classifies all deferred equations against the code claim in a single
+   batch and emits structured JSON. This is what lets DDPM's q_sample
+   pair its closed-form return expression against paper equation [2]
+   while correctly skipping the one-step-forward and posterior-reparam
+   rows that share the same paper LHS symbol.
+
+The equivalence check itself stays in ``sympy_match.py`` / ``code.py``
+— this module only resolves which paper equation pairs to which code
+target.
 """
 from __future__ import annotations
 
+import json
 import re
+import sys
 from dataclasses import dataclass
+
+from nocap_council import client
 
 
 @dataclass
@@ -115,188 +136,298 @@ def code_lhs_to_symbol(equation: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# RHS symbol extraction (used for Jaccard return-value scoring)
+# LLM-based resolver for deferred equations
 # ---------------------------------------------------------------------------
 
 
-# Math/LaTeX scaffolding tokens that don't carry semantic identity. These
-# are stripped from the symbol set BEFORE Jaccard scoring so that
-# ``\sqrt(\bar\alpha_t) x_0 + \sqrt(1-\bar\alpha_t) \epsilon`` doesn't
-# match every other equation just because they all use ``sqrt``.
-_RHS_NOISE_TOKENS = frozenset(
-    {
-        "sqrt",
-        "frac",
-        "left",
-        "right",
-        "cdot",
-        "exp",
-        "log",
-        "sin",
-        "cos",
-        "max",
-        "min",
-        "sum",
-        "prod",
-        "int",
-        "norm",
-        "abs",
-        "boldsymbol",
-        "mathbf",
-        "mathrm",
-        "mathcal",
-        "mathbb",
-        "operatorname",
-        "text",
-        "Sigma",
-        "sigma",
-        "lambda",
-        "phi",
-        "psi",
-        "rho",
-        "tau",
-        "dtype",
-        "float64",
-        "float32",
-        "np",
-        "torch",
-        "asarray",
-        "zeros_like",
-        "ones_like",
-        "linspace",
-        "tensor",
-        "self",
-        "shape",
-        "device",
-        "to",
-        "view",
-        "reshape",
-        "unsqueeze",
-        "gather",
-        "_gather",
-        "and",
-        "or",
-        "not",
-        "if",
-        "else",
-        "for",
-        "in",
-        "return",
-    }
+_LLM_PAIR_MATCH_SYSTEM = (
+    "You are a paper-to-code pair-matcher. You receive a list of paper "
+    "equations whose LHS symbols did not match any code-side LHS, plus "
+    "the full code claim (parameters, precomputed coefficients in "
+    "__init__, computed equations in the function body, and the return "
+    "expression). For EACH paper equation, decide which (if any) code "
+    "element implements it. Output strict JSON only — no prose, no "
+    "markdown fences."
 )
 
 
-def _extract_rhs_symbols(equation: str) -> set[str]:
-    """Return the bag-of-symbols of an equation's RHS (or whole expr).
+_LLM_PAIR_MATCH_INSTRUCTION = """
+### Task
 
-    Used by the Jaccard scorer when pairing deferred paper equations
-    against the function's return expression. The goal is "do these two
-    expressions reference the same set of variables" — names like
-    ``alpha``, ``beta``, ``x_0``, ``epsilon``, ``noise`` survive; LaTeX
-    scaffolding (``sqrt``, ``frac``, ``left``, ``right``) and Python/
-    NumPy plumbing (``np``, ``asarray``, ``self``, ``dtype``) are
-    filtered out.
+For each DEFERRED paper equation in the input, decide its verdict:
+
+- `"PAIRED_RETURN"` — the paper equation describes what the function
+  RETURNS. The code computes the same quantity inline in the return
+  expression (possibly via different names: `x_0` ↔ `x0`, `\\epsilon` ↔
+  `noise`, `\\bar\\alpha_t` ↔ `bar_alphas[t]` ↔ `sqrt_bar` after
+  substitution). Set `code_target = "_return"`.
+
+- `"PAIRED_INIT"` — the paper equation describes a coefficient that the
+  code precomputes in `__init__` (e.g. `\\tilde\\beta_t = ...` ↔
+  `self.posterior_variance = ...`). Set `code_target` to the code-side
+  attribute name (e.g. `"posterior_variance"`).
+
+- `"PAIRED_LOCAL"` — the paper equation matches a code computed_equation
+  with a different LHS name (rare; usually the LHS-equality fast path
+  catches this). Set `code_target` to the code LHS symbol.
+
+- `"UNMATCHED"` — the paper equation is a paper-internal intermediate
+  (a definitional shorthand, a notational identity, or a quantity used
+  in the derivation but never realized in code). No code counterpart.
+
+### Disambiguation rules
+
+1. **Multiple paper equations sharing the same LHS symbol** (e.g. three
+   DDPM rows all written `x_t = ...`): at most ONE of them can pair
+   against the function's return. Pick the one whose RHS variables
+   actually appear in the return expression (after accounting for
+   alias differences). Mark the others UNMATCHED.
+
+2. **`\\mathbf{I}` or other malformed terms** in a paper equation
+   (e.g. an identity matrix where a noise sample should be): treat the
+   equation as malformed and mark it UNMATCHED unless there is a clear
+   alias-aware match against the code.
+
+3. **Paper-side function-call LHS** (e.g. `\\mu_\\theta(x_t, t) = ...`):
+   look for a code-side equation that defines the same quantity by any
+   name. If only intermediate, mark UNMATCHED.
+
+4. **Loss equations** (`L_{t-1} = ...`): pair with the function's
+   return ONLY if the function actually computes a loss. Otherwise
+   UNMATCHED.
+
+### Output schema (strict)
+
+Return a JSON object of EXACTLY this shape:
+
+{
+  "pairings": [
+    {
+      "paper_index": <int>,
+      "verdict": "PAIRED_RETURN" | "PAIRED_INIT" | "PAIRED_LOCAL" | "UNMATCHED",
+      "code_target": <string or null>,
+      "alias_map": {<paper symbol>: <code symbol>, ...},
+      "rationale": <one short sentence>
+    }
+  ]
+}
+
+- One entry per DEFERRED paper equation, in the same order they were
+  presented in the input.
+- `paper_index` MUST equal the input index given.
+- `code_target`: required when verdict starts with PAIRED; otherwise null.
+- `alias_map`: paper-side symbols on left, code-side names on right.
+  Empty object {} if none. Only include symbols actually used in the
+  pairing (don't dump the whole vocabulary).
+- `rationale`: one terse sentence (max ~20 words). No prose explanations.
+- ENFORCE: at most ONE PAIRED_RETURN across all entries. Multiple
+  PAIRED_RETURN responses are a violation; you will be re-prompted.
+
+Return JSON only.
+"""
+
+
+_LLM_PAIR_MATCH_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "pairings": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "paper_index": {"type": "integer"},
+                    "verdict": {"type": "string"},
+                    "code_target": {"type": ["string", "null"]},
+                    "alias_map": {"type": "object"},
+                    "rationale": {"type": "string"},
+                },
+                "required": ["paper_index", "verdict"],
+            },
+        }
+    },
+    "required": ["pairings"],
+}
+
+
+def _format_deferred_for_prompt(
+    deferred: list[tuple[int, str, str]],
+    code_claim: dict,
+) -> str:
+    """Render the deferred equations + full code claim as a prompt body."""
+    lines: list[str] = []
+    lines.append("### Code claim")
+    lines.append(f"function_name: {code_claim.get('function_name', '')}")
+    params = code_claim.get("parameters") or []
+    lines.append(f"parameters: {params}")
+    init = code_claim.get("initial_conditions") or []
+    if init:
+        lines.append("initial_conditions (precomputed in __init__):")
+        for eq in init:
+            lines.append(f"  - {eq}")
+    computed = code_claim.get("computed_equations") or []
+    if computed:
+        lines.append("computed_equations (function body):")
+        for eq in computed:
+            lines.append(f"  - {eq}")
+    rv = (code_claim.get("return_value") or "").strip()
+    if rv:
+        lines.append(f"return_value: {rv}")
+    lines.append("")
+    lines.append("### Deferred paper equations to classify")
+    for paper_index, paper_lhs, paper_eq in deferred:
+        lines.append(f"  [{paper_index}] paper_lhs=`{paper_lhs}`  eq: {paper_eq}")
+    return "\n".join(lines)
+
+
+def _resolve_deferred_via_llm(
+    deferred_indices: list[int],
+    entries: list[PairMatchEntry],
+    code_claim: dict,
+) -> None:
+    """Mutate `entries`: upgrade deferred UNMATCHED rows to PAIRED via LLM.
+
+    On any error the deferred entries are left as-is (UNMATCHED), so a
+    transient API failure simply means we lose pair-match resolution
+    for that run — never a wrong pairing.
     """
-    if not equation:
-        return set()
-    if "=" in equation:
-        rhs = equation.split("=", 1)[1]
-    else:
-        rhs = equation
+    if not deferred_indices:
+        return
+    deferred_payload = [
+        (
+            entries[ent_idx].paper_index,
+            entries[ent_idx].paper_lhs_symbol,
+            entries[ent_idx].paper_equation,
+        )
+        for ent_idx in deferred_indices
+    ]
+    user_prompt = _format_deferred_for_prompt(deferred_payload, code_claim) + "\n" + _LLM_PAIR_MATCH_INSTRUCTION
+    try:
+        raw = client.call(
+            model="gemma-3-27b-it",
+            system=_LLM_PAIR_MATCH_SYSTEM,
+            user=user_prompt,
+            json_schema=_LLM_PAIR_MATCH_SCHEMA,
+        )
+        parsed = json.loads(raw)
+        pairings = parsed.get("pairings") or []
+    except (json.JSONDecodeError, Exception) as exc:  # noqa: BLE001
+        print(
+            f"[pair_match.llm] WARNING: deferred resolver failed "
+            f"({type(exc).__name__}: {str(exc)[:120]}); leaving "
+            f"{len(deferred_indices)} entries as UNMATCHED",
+            file=sys.stderr,
+        )
+        return
 
-    text = rhs
+    by_paper_index: dict[int, dict] = {}
+    for p in pairings:
+        try:
+            by_paper_index[int(p["paper_index"])] = p
+        except (KeyError, ValueError, TypeError):
+            continue
 
-    # Flatten LaTeX accents to ``name_hat`` / ``name_tilde`` /
-    # ``name_bar`` so e.g. ``\bar\alpha`` and ``alpha_bar`` collide on
-    # the canonical token ``alpha_bar``.
-    text = re.sub(r"\\widehat\{(\w+)\}", r"\1_hat", text)
-    text = re.sub(r"\\hat\{(\w+)\}", r"\1_hat", text)
-    text = re.sub(r"\\hat([A-Za-z]+)", r"\1_hat", text)
-    text = re.sub(r"\\tilde\{(\w+)\}", r"\1_tilde", text)
-    text = re.sub(r"\\tilde\\?(\w+)", r"\1_tilde", text)
-    text = re.sub(r"\\bar\{(\w+)\}", r"\1_bar", text)
-    text = re.sub(r"\\bar\\?(\w+)", r"\1_bar", text)
+    # Enforce at-most-one PAIRED_RETURN constraint defensively (in case
+    # the LLM misbehaves). Pick the one whose alias_map has the largest
+    # intersection with the function's return-value text as the winner.
+    return_winners = [
+        p for p in by_paper_index.values()
+        if p.get("verdict") == "PAIRED_RETURN"
+    ]
+    if len(return_winners) > 1:
+        rv = (code_claim.get("return_value") or "").lower()
+        scored = sorted(
+            return_winners,
+            key=lambda p: sum(
+                1 for v in (p.get("alias_map") or {}).values()
+                if isinstance(v, str) and v.lower() in rv
+            ),
+            reverse=True,
+        )
+        winner = scored[0]
+        for p in return_winners:
+            if p is not winner:
+                p["verdict"] = "UNMATCHED"
+                p["rationale"] = (
+                    "demoted: more than one PAIRED_RETURN; lost to "
+                    f"paper_index={winner.get('paper_index')}"
+                )
 
-    # Drop styling wrappers entirely (``\boldsymbol{x}`` -> ``x``).
-    text = re.sub(r"\\(?:boldsymbol|mathbf|mathrm)\{(\w+)\}", r"\1", text)
-
-    # Strip remaining backslashes so ``\alpha`` -> ``alpha``,
-    # ``\epsilon`` -> ``epsilon``.
-    text = text.replace("\\", "")
-
-    # Tokenize: alphanumeric runs (allow underscores).
-    tokens = re.findall(r"[A-Za-z][A-Za-z0-9_]*", text)
-    raw = {t for t in tokens if not t.isdigit()}
-
-    # Drop noise tokens but KEEP plain Greek/algebraic identifiers.
-    return {t for t in raw if t not in _RHS_NOISE_TOKENS}
-
-
-def _jaccard(a: set[str], b: set[str]) -> float:
-    """Jaccard similarity: |A ∩ B| / |A ∪ B| (0 when both empty)."""
-    if not a and not b:
-        return 0.0
-    inter = a & b
-    union = a | b
-    if not union:
-        return 0.0
-    return len(inter) / len(union)
+    for ent_idx in deferred_indices:
+        entry = entries[ent_idx]
+        p = by_paper_index.get(entry.paper_index)
+        if not p:
+            continue
+        verdict = p.get("verdict") or "UNMATCHED"
+        rationale = p.get("rationale") or ""
+        if verdict == "UNMATCHED":
+            if rationale:
+                entry.detail = rationale
+            continue
+        code_target = p.get("code_target") or ""
+        if not code_target:
+            entry.detail = "LLM proposed PAIRED but missing code_target — kept UNMATCHED"
+            continue
+        entry.verdict = "PAIRED"
+        entry.code_target = code_target
+        entry.code_lhs_symbol = code_target
+        entry.detail = rationale
+        if verdict == "PAIRED_RETURN":
+            rv = (code_claim.get("return_value") or "").strip()
+            entry.code_equation = f"_return = {rv}" if rv else "_return"
+        elif verdict == "PAIRED_INIT":
+            init = code_claim.get("initial_conditions") or []
+            match = next(
+                (eq for eq in init if eq.split("=", 1)[0].strip().endswith(code_target)),
+                None,
+            )
+            entry.code_equation = match or f"<init>{code_target}"
+        elif verdict == "PAIRED_LOCAL":
+            computed = code_claim.get("computed_equations") or []
+            match = next(
+                (eq for eq in computed if eq.split("=", 1)[0].strip() == code_target),
+                None,
+            )
+            entry.code_equation = match or f"<local>{code_target}"
 
 
 # ---------------------------------------------------------------------------
-# Pair resolver
+# Pair resolver (public API)
 # ---------------------------------------------------------------------------
 
 
-def pair_match(paper_claim: dict, code_claim: dict) -> list[PairMatchEntry]:
+def pair_match(
+    paper_claim: dict,
+    code_claim: dict,
+    *,
+    use_llm: bool = True,
+) -> list[PairMatchEntry]:
     """Resolve each paper claimed_equation to GATED/PAIRED/UNMATCHED.
 
-    Two-pass resolver:
+    1. **LHS equality fast path** (deterministic, no LLM). For each
+       paper equation, if its LHS symbol matches a code parameter ->
+       ``GATED``; if it matches a code computed_equation LHS ->
+       ``PAIRED``. Otherwise the equation is deferred.
 
-    1. **LHS equality pass.** For each paper equation, if its LHS
-       symbol is a function parameter -> ``GATED``; if it matches a
-       code computed_equation LHS -> ``PAIRED`` (``code_target`` set
-       to the code-side LHS symbol). Otherwise the equation is
-       ``DEFERRED`` for pass 2.
-
-    2. **Return-value Jaccard pass.** Among deferred equations, score
-       each one's RHS symbol set against the function's return value
-       symbol set (Jaccard = |∩| / |∪|). The single best-scoring
-       deferred equation is paired against ``_return``
-       (``code_target="_return"``); all others become ``UNMATCHED``.
-
-       This is what makes pair-match work for "function returns inline
-       expression with no named LHS" cases like DDPM's ``q_sample``,
-       which returns ``sqrt_alpha_bar * x0 + sqrt_one_minus_alpha_bar
-       * noise`` without ever assigning to a local ``x_t``. Among the
-       three DDPM paper equations whose LHS is ``x_t`` (one-step
-       forward, closed-form, posterior reparam), only the closed-form
-       has high RHS overlap with the return expression — so only that
-       one is paired, and the other two are correctly excluded from
-       the matcher.
-
-    A score floor of 0 means: if the best deferred equation has zero
-    variable overlap with the return value, nothing pairs and
-    everything stays ``UNMATCHED`` (no false positives from forcing a
-    bad pairing).
+    2. **LLM pair-match** (when `use_llm=True`). Deferred equations
+       are batched into a single Gemma call which returns structured
+       pairings against the function's return value, init-time
+       coefficients, or computed equations. Aliasing (``\\epsilon`` ↔
+       ``noise``, ``\\bar\\alpha_t`` ↔ ``sqrt_bar_alphas``) is handled
+       by the LLM, eliminating the need for regex symbol matching.
 
     Returns a list of :class:`PairMatchEntry` aligned with
-    ``paper_claim["claimed_equations"]`` (one entry per paper
-    equation, in input order).
+    ``paper_claim["claimed_equations"]`` (one entry per paper equation,
+    in input order).
     """
     code_params = set(code_claim.get("parameters") or [])
     code_equations: list[str] = list(code_claim.get("computed_equations") or [])
-    return_value: str = (code_claim.get("return_value") or "").strip()
 
-    # Index code equations by LHS symbol for O(1) lookup. Last write
-    # wins — last assignment to a given LHS in the function body is
-    # what the matcher ultimately reads.
     code_by_lhs: dict[str, str] = {}
     for code_eq in code_equations:
         sym = code_lhs_to_symbol(code_eq)
+        # Last write wins.
         code_by_lhs[sym] = code_eq
 
-    # Pass 1: LHS-equality resolution.
     entries: list[PairMatchEntry] = []
     deferred_indices: list[int] = []
     for i, paper_eq in enumerate(paper_claim.get("claimed_equations") or []):
@@ -327,8 +458,6 @@ def pair_match(paper_claim: dict, code_claim: dict) -> list[PairMatchEntry]:
                 )
             )
             continue
-        # Defer: maybe this equation pairs against the function's
-        # return value. Mark UNMATCHED for now; pass 2 may upgrade it.
         deferred_indices.append(len(entries))
         entries.append(
             PairMatchEntry(
@@ -340,40 +469,8 @@ def pair_match(paper_claim: dict, code_claim: dict) -> list[PairMatchEntry]:
             )
         )
 
-    # Pass 2: among deferred equations, the single one whose RHS has
-    # the most variable overlap with the function's return expression
-    # is paired against ``_return``.
-    if return_value and deferred_indices:
-        return_symbols = _extract_rhs_symbols(return_value)
-        if return_symbols:
-            scored: list[tuple[float, int]] = []
-            for ent_idx in deferred_indices:
-                paper_rhs_symbols = _extract_rhs_symbols(
-                    entries[ent_idx].paper_equation
-                )
-                score = _jaccard(paper_rhs_symbols, return_symbols)
-                scored.append((score, ent_idx))
-            scored.sort(key=lambda x: x[0], reverse=True)
-            best_score, best_idx = scored[0]
-            if best_score > 0.0:
-                e = entries[best_idx]
-                e.verdict = "PAIRED"
-                e.code_equation = f"_return = {return_value}"
-                e.code_lhs_symbol = "_return"
-                e.code_target = "_return"
-                e.detail = (
-                    f"paired against function return value via RHS-Jaccard "
-                    f"score={best_score:.2f} (no LHS match for `{e.paper_lhs_symbol}`)"
-                )
-                # Mark the losers explicitly so the trace says why they
-                # were not picked.
-                for score, ent_idx in scored[1:]:
-                    if entries[ent_idx].verdict == "UNMATCHED":
-                        entries[ent_idx].detail = (
-                            f"deferred to return-value contest; "
-                            f"lost to paper_index={entries[best_idx].paper_index} "
-                            f"(score={score:.2f} < {best_score:.2f})"
-                        )
+    if use_llm and deferred_indices:
+        _resolve_deferred_via_llm(deferred_indices, entries, code_claim)
 
     return entries
 

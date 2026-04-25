@@ -870,6 +870,16 @@ def verify(
                 "n_unmatched": verdicts.count("UNMATCHED"),
             },
         )
+        # T1.26 diagnostic: per-row pair-match trace to stderr so the
+        # matcher's behavior on each paper equation is visible.
+        for e in pair_entries:
+            print(
+                f"[pair_match] [{e['paper_index']}] {e['verdict']:<10} "
+                f"target={e.get('code_target') or '-':<20} "
+                f"lhs=`{e['paper_lhs_symbol'][:20]}` "
+                f"detail={(e.get('detail') or '')[:80]}",
+                file=sys.stderr,
+            )
 
     # Stage 5: code (run_strategy × N)
     # Inter-strategy backoff: when the previous strategy fired the
