@@ -246,6 +246,15 @@ That output proves the entire council works. No Slack, no frontend, no MCP — j
 - **Files touched**: `Makefile`.
 - **Hours**: 0.5
 
+### T1.21 — Migrate `spec.py` from Flash-Lite to Gemma 3 27B (post-T1.16 follow-up)
+
+- [~] **@devin — 2026-04-25 17:10**
+- **Deliverable**: refactor `nocap_council/spec.py` to route through `gemma-3-27b-it` (single-model stack — already used by Plan + Critic). Drop `response_schema=Claim` reliance (Gemma doesn't enforce it); pin shape via a `_JSON_INSTRUCTION` block in the prompt mirroring `plan.py`. Defensive parse: try `Claim.model_validate()` → on `ValidationError`, log warning to stderr and return a Claim with empty defaults. NEVER raise.
+- **Why**: Flash-Lite's free-tier 20 RPD limit keeps clipping demos. Gemma 3 27B is ~14,400 RPD on the same key, so going single-model removes a real demo risk.
+- **Acceptance**: `make smoke-adam` still exits 0 with both verdicts (clean=pass, buggy=anomaly), wall clock <30s per run. Spec stage still emits `paper_section="Algorithm 1"` and a non-empty `claimed_equations` list.
+- **Files touched**: `nocap-council/nocap_council/spec.py`.
+- **Hours**: 0.5
+
 ### T1.17 — Sponsor track wiring (Gemma 4 + GoDaddy + Atlas seeds)
 
 - [ ] **@user** (manual setup steps; agents can't do these)
