@@ -465,6 +465,10 @@ def _strategy_evidence(
     paper: dict[str, Any],
     code_env: dict[str, Any],
     claim: dict[str, Any],
+    *,
+    function_source: str | None = None,
+    function_name: str | None = None,
+    strategy_idx: int | None = None,
 ) -> dict[str, Any]:
     """Run one ``Strategy``; for symbolic/numerical, iterate every claimed eq.
 
@@ -477,6 +481,7 @@ def _strategy_evidence(
     """
     kind = strategy.kind
     equations = claim.get("claimed_equations") or []
+    section_for_judge = claim.get("paper_section")
     if kind in ("symbolic", "numerical"):
         if not equations:
             return coder.run_strategy(
@@ -486,6 +491,10 @@ def _strategy_evidence(
                 claim_equation=None,
                 var_map=None,
                 target_var=None,
+                claim_section=section_for_judge,
+                function_source=function_source,
+                function_name=function_name,
+                strategy_idx=strategy_idx,
             )
         env_symbols = _all_symbols(code_env)
         skipped: list[tuple[int, str]] = []
@@ -512,11 +521,22 @@ def _strategy_evidence(
                 claim_equation=eq,
                 var_map=var_map,
                 target_var=target,
+                claim_section=section_for_judge,
+                function_source=function_source,
+                function_name=function_name,
+                strategy_idx=strategy_idx,
             )
             err = ev.get("error") or ""
-            if isinstance(err, str) and "not found" in err.lower():
+            method = ev.get("method_used") or ""
+            judge_ran = isinstance(method, str) and method.startswith("llm_judge")
+            if (
+                isinstance(err, str)
+                and "not found" in err.lower()
+                and not judge_ran
+            ):
                 # Matcher-side symbol miss (e.g. var_map references a
-                # paper symbol that doesn't appear anywhere in code_env).
+                # paper symbol that doesn't appear anywhere in code_env)
+                # AND the T1.23 judge didn't recover the equation. Skip.
                 skipped.append((i, target))
                 continue
             if not ev.get("equivalent", True):
@@ -724,7 +744,15 @@ def verify(
             time.sleep(inter_strategy_sleep_s)
         s0 = time.perf_counter()
         try:
-            ev = _strategy_evidence(strategy, paper, code_env, claim)
+            ev = _strategy_evidence(
+                strategy,
+                paper,
+                code_env,
+                claim,
+                function_source=function_source,
+                function_name=fn_name,
+                strategy_idx=i,
+            )
         except Exception as exc:
             ms = int((time.perf_counter() - s0) * 1000)
             tb = traceback.format_exc()
@@ -771,6 +799,9 @@ def verify(
                 "method_used": ev.get("method_used"),
                 "target_var": ev.get("target_var"),
                 "critic_score": ev.get("critic_score"),
+                # T1.23: surface the judge trigger when the LLM-as-judge
+                # fired so the JSONL trace records WHY (not just that it ran).
+                "judge_trigger": ev.get("judge_trigger"),
             },
         )
 
