@@ -196,7 +196,8 @@ export function LandingPage() {
                         </span>
                       </p>
                       <p className="mt-2 rounded-xl bg-[#242424] px-3 py-2 font-mono text-xs leading-6 text-[#FAFAFA]">
-                        /nocap verify-impl 1412.6980 ./adam.py
+                        /nocap verify-impl 1412.6980
+                        https://github.com/LA-Hacks-Deniz/nocap/blob/main/benchmark/implementations/adam_clean.py
                       </p>
                     </div>
                   </div>
@@ -212,41 +213,62 @@ export function LandingPage() {
                         </span>
                       </p>
                       <div className="mt-3 rounded-2xl border border-[#3a3a3a] bg-[#202020] p-4">
-                        <p className="font-bold">
-                          🔴 Anomaly detected{" "}
-                          <span className="font-normal text-[#D1D5DB]">
-                            confidence 0.95
-                          </span>
+                        <p className="text-[#D1D5DB]">
+                          🔍 Verifying paper 1412.6980... (&lt;30s)
                         </p>
-                        <dl className="mt-4 grid gap-3 text-xs leading-6 text-[#D1D5DB]">
+                        <p className="mt-4 font-bold text-[#FAFAFA]">
+                          🟢 No Cap — Implementation matches paper
+                        </p>
+                        <dl className="mt-5 grid gap-x-8 gap-y-4 text-sm leading-6 text-[#D1D5DB] sm:grid-cols-2">
                           <div>
-                            <dt className="font-bold uppercase tracking-[0.16em] text-[#9CA3AF]">
-                              Paper Algorithm 1, equation 3
+                            <dt className="font-bold text-[#FAFAFA]">
+                              Confidence
                             </dt>
                             <dd className="mt-1 font-mono text-[#FAFAFA]">
-                              m̂_t = m_t / (1 - β₁ᵗ)
+                              0.95
                             </dd>
                           </div>
                           <div>
-                            <dt className="font-bold uppercase tracking-[0.16em] text-[#9CA3AF]">
-                              Code line 23
+                            <dt className="font-bold text-[#FAFAFA]">
+                              Paper
                             </dt>
                             <dd className="mt-1 font-mono text-[#FAFAFA]">
-                              m_hat = self.m
+                              arxiv:1412.6980 §Algorithm 1
                             </dd>
                           </div>
                           <div>
-                            <dt className="font-bold uppercase tracking-[0.16em] text-[#9CA3AF]">
-                              Residual
+                            <dt className="font-bold text-[#FAFAFA]">
+                              Function
                             </dt>
-                            <dd className="mt-1 font-mono text-[#FAFAFA]">
-                              m·β₁ᵗ / (1 - β₁ᵗ)
+                            <dd className="mt-1">
+                              <code className="rounded border border-[#3a3a3a] bg-[#FAFAFA] px-1.5 py-0.5 font-mono text-[#1a1a1a]">
+                                step
+                              </code>
                             </dd>
-                            <dd className="mt-1 text-[#D1D5DB]">
-                              bias correction missing
+                          </div>
+                          <div>
+                            <dt className="font-bold text-[#FAFAFA]">Trace</dt>
+                            <dd className="mt-1">
+                              <code className="rounded border border-[#3a3a3a] bg-[#FAFAFA] px-1.5 py-0.5 font-mono text-[#1a1a1a]">
+                                16405808-09be-4a3f-9e78-327029d17556
+                              </code>
                             </dd>
                           </div>
                         </dl>
+                        <div className="mt-5 flex flex-wrap gap-2">
+                          <button
+                            className="rounded-lg border border-[#3a3a3a] bg-[#FAFAFA] px-3 py-2 text-xs font-bold text-[#1a1a1a]"
+                            type="button"
+                          >
+                            Replay trace
+                          </button>
+                          <button
+                            className="rounded-lg bg-[#FAFAFA] px-3 py-2 text-xs font-bold text-[#1a1a1a]"
+                            type="button"
+                          >
+                            Approve anyway
+                          </button>
+                        </div>
                       </div>
                     </div>
                   </div>
