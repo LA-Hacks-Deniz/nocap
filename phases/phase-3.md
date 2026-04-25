@@ -248,7 +248,7 @@ Phase 3 ships when a judge can hit `nocap.wiki` from their phone and watch a liv
 
 ### T3.21 — Landing page MVP (localhost only)
 
-- [x] **@devin** — 2026-04-25 20:36
+- [x] **@devin** — 2026-04-25 20:36 (deployed to Vercel via user)
 - **Deliverable**: `nocap-frontend/` localhost-perfect single-page landing site for the hackathon judging demo. Includes sticky nav, hero wordmark with cap emoji on the `p`, cursor-reactive dot canvas with mobile static fallback, "What it does" copy + Slack mockup, monochrome sponsors/tracks row, and footer links. Uses Next.js 15 App Router, Tailwind v4, shadcn/ui, `motion`, React 19, and Inter via `next/font/google`.
 - **Acceptance**:
   1. `cd nocap-frontend && npm run dev` serves at `localhost:3000` with all 5 sections rendering, dot canvas animating on desktop, and hero wordmark cap emoji correctly positioned over the `p`.
@@ -262,7 +262,190 @@ Phase 3 ships when a judge can hit `nocap.wiki` from their phone and watch a liv
 
 ---
 
+## Task block H — Dashboard MVP (parallelizable, 11 tasks)
+
+*Active scope: a public dashboard at `nocap.wiki/dashboard` where any visitor can browse all No Cap verifications as cards. Click a card → trace detail page at `nocap.wiki/trace/<trace_id>` with the paper PDF, code, residual, critic, and VIGIL audit. Slack verdict messages get a "View Issue" button linking to the relevant trace page.*
+
+**Architecture decisions (locked):**
+
+1. **Storage**: every verdict already lands in MongoDB Atlas via `mongo_log.log_verdict` (T2.4). For the dashboard, we extend the trace document to also include the original `code_str` so the side-by-side viewer can render it. Paper PDF is fetched live from `arxiv.org/pdf/<arxiv_id>.pdf` via a gateway proxy (no PDF storage needed).
+2. **No auth, public read** — hackathon scope. Anyone can browse all traces. Post-hackathon: per-workspace filter via Slack OAuth.
+3. **Data flow**: Vercel-hosted frontend → fetch from `api.nocap.wiki/api/traces` → cloudflared tunnel → laptop gateway → Mongo.
+4. **Routing**: `nocap.wiki` (landing — done), `nocap.wiki/dashboard` (browse), `nocap.wiki/trace/[id]` (detail). API at `api.nocap.wiki/api/*`.
+5. **Branding**: drop the `~` (tilde) logo from the original Design System entirely. Use the Apple iOS cap emoji 🧢 in the wordmark "NoCap" (cap on the `p`) consistently across nav, favicon, hero, and footer.
+6. **Styling**: same Design System as landing — warm off-white #FAFAFA, near-black #1a1a1a, NO accent colors, Inter Bold, restraint over decoration. The ONE allowed dark surface is the Slack mockup style (preserved for the residual block in trace detail).
+7. **Tech stack**: Next.js 15 App Router (already), Tailwind v4 (already), shadcn/ui (already), TanStack Query for fetching, react-pdf for paper PDF, react-syntax-highlighter for code, KaTeX for math, recharts for the timing chart, framer-motion (`motion`) for animations.
+
+**Owner split:**
+- **Devin** = harder/structural (Rust API endpoints, complex viewer component, replay endpoint)
+- **Claude** (parallel session) = page-level wiring (dashboard page, card component, detail page, API client, branding cleanup, Slack button update)
+
+> **Parallelism**: T3.23 (gateway endpoints) blocks T3.31 (API client). Otherwise tasks are largely independent — UI work can stub the API while Devin builds it.
+
+### T3.22 — User: deploy landing + DNS + cap-emoji favicon
+
+- [ ] **@user**
+- **Deliverable**: 
+  1. nocap.wiki points at the Vercel deployment of `nocap-frontend/` (CNAME at apex per the Phase 2 T2.2 split — `nocap.wiki` → Vercel, `api.nocap.wiki` → cloudflared)
+  2. Update Slack manifest Request URLs to `https://api.nocap.wiki/slack-event` (per Phase 2 plan)
+  3. Generate a 32×32 favicon containing the cap emoji 🧢 on warm-off-white background, save to `nocap-frontend/public/favicon.ico`
+- **Acceptance**: `https://nocap.wiki` shows landing; `https://api.nocap.wiki/health` returns "ok"; favicon is the cap emoji.
+- **Hours**: 0.5
+
+### T3.23 — Gateway trace API endpoints
+
+- [ ] **@devin**
+- **Deliverable**: `nocap-gateway/src/routes/traces.rs` with three endpoints:
+  - `GET /api/traces?limit=N&offset=N` — paginated list of trace summaries (trace_id, arxiv_id, function_name, verdict, confidence, paper_section, created_at). Default limit=50, max=200. Sorted by created_at desc.
+  - `GET /api/traces/:trace_id` — full trace document from Mongo by trace_id.
+  - `GET /api/papers/:arxiv_id/pdf` — proxy fetch of `https://arxiv.org/pdf/<arxiv_id>.pdf` (avoids CORS issues with react-pdf reading directly from arxiv).
+  - All endpoints set permissive CORS headers (`Access-Control-Allow-Origin: *`) so the Vercel frontend can call them. Add a tower middleware layer for CORS.
+- **Acceptance**: 
+  - `curl https://api.nocap.wiki/api/traces?limit=5` returns JSON array with 5 most recent trace summaries
+  - `curl https://api.nocap.wiki/api/traces/<known-trace-id>` returns the full trace document
+  - `curl https://api.nocap.wiki/api/papers/1412.6980/pdf > out.pdf && file out.pdf` confirms it's a valid PDF
+- **Files touched**: `nocap-gateway/src/routes/traces.rs`, `nocap-gateway/src/routes/mod.rs`, `nocap-gateway/src/main.rs` (route mounts + CORS middleware), `nocap-gateway/Cargo.toml` (add `tower-http` with `cors` feature).
+- **Hours**: 2
+- **Dependencies**: existing mongodb crate from T2.10, `tower-http` for CORS.
+
+### T3.24 — Persist `code_str` in trace docs
+
+- [ ] **@devin**
+- **Deliverable**: update `mongo_log.log_verdict` and `orchestrator.verify` so the persisted trace document includes `code_str` (the raw Python source the gateway received). Currently the orchestrator's `verify()` doesn't carry `code_str` through to the augmented dict; needs a small refactor to plumb it through.
+- **Acceptance**: query a trace doc post-Slack-run via mongosh, confirm `code_str` field is present and non-empty (the original Python source the user pasted).
+- **Files touched**: `nocap-council/nocap_council/orchestrator.py` (add `code_str` to augmented dict), `nocap-council/nocap_council/mongo_log.py` (no change if it stores the dict verbatim).
+- **Hours**: 0.5
+
+### T3.25 — `PaperCodeViewer.tsx` component
+
+- [ ] **@devin**
+- **Deliverable**: `nocap-frontend/src/components/trace/PaperCodeViewer.tsx`. Side-by-side layout (50/50 desktop, stacked mobile):
+  - Left pane: react-pdf renders the paper PDF (fetched from `api.nocap.wiki/api/papers/<arxiv_id>/pdf`). User can scroll, zoom basic. Highlight the equation that caused the anomaly (best-effort: scroll to the section name from `claim.paper_section`).
+  - Right pane: react-syntax-highlighter renders `code_str` with Python syntax highlighting. Highlight the line that contains the buggy assignment (use the `code_line` from the verdict if available; otherwise the line containing the target_var name).
+  - Header strip across both panes: arxiv link + paper section + function name.
+- **Acceptance**: passing a trace doc to the component renders both panes; clicking a paper page works; the buggy line in code is visually highlighted in the right pane.
+- **Files touched**: `nocap-frontend/src/components/trace/PaperCodeViewer.tsx`, plus `package.json` deps (react-pdf, react-syntax-highlighter).
+- **Hours**: 3
+- **Reference**: react-pdf docs for PDF rendering setup (worker file, etc.)
+
+### T3.26 — `TimingChart.tsx` component
+
+- [ ] **@devin**
+- **Deliverable**: `nocap-frontend/src/components/trace/TimingChart.tsx`. Horizontal bar chart of per-stage timings using `recharts`. Each bar is a stage (paper_extract / spec / plan / code_extract / code[*] / polygraph), labeled with stage name + ms. Total wall clock at the bottom. Grayscale only (no color); use weight + size for hierarchy per Design System.
+- **Acceptance**: passing a trace doc with `evidences[].method_used` + per-stage ms field renders the chart correctly. All 7-9 stages visible. No color accents.
+- **Files touched**: `nocap-frontend/src/components/trace/TimingChart.tsx`, `package.json` (recharts).
+- **Hours**: 1.5
+
+### T3.27 — Replay endpoint
+
+- [ ] **@devin**
+- **Deliverable**: `nocap-gateway/src/routes/replay.rs` with `POST /api/traces/:trace_id/replay`. Reads the trace doc from Mongo, extracts `arxiv_id` + `code_str` + `function_name` + `claim`, calls the existing `/api/verify-impl` endpoint internally (or directly spawns the council subprocess), returns the new `trace_id`.
+- **Acceptance**: `curl -X POST https://api.nocap.wiki/api/traces/<known-trace-id>/replay` returns `{"trace_id": "<new-uuid>"}` and a fresh trace doc lands in Mongo within 30s.
+- **Files touched**: `nocap-gateway/src/routes/replay.rs`, route mount in `main.rs`.
+- **Hours**: 1
+
+### T3.28 — Dashboard page
+
+- [ ] **@claude**
+- **Deliverable**: `nocap-frontend/src/app/dashboard/page.tsx`. Full page:
+  - Header: nav (cap-emoji wordmark + "Dashboard" / "GitHub" / "Devpost"), section title "All verifications"
+  - Stats row: 4 cards — Total checks, Anomalies caught, Pass rate, Avg wall clock — pulled from the trace list
+  - Filter bar: verdict dropdown (all/pass/anomaly/inconclusive), paper search (filter by arxiv_id), date range (last 24h / 7d / all)
+  - Card grid: responsive 3-column desktop / 1-column mobile, each card is `<TraceCard />`
+  - Empty state: "No verifications yet — try `/nocap verify-impl` in Slack"
+- **Acceptance**: visiting `/dashboard` on the Vercel deploy renders all sections. Filter bar updates the card grid live (TanStack Query refetch on filter change). Stats reflect filtered subset.
+- **Files touched**: `nocap-frontend/src/app/dashboard/page.tsx`, plus optional `nocap-frontend/src/components/dashboard/StatsRow.tsx` and `FilterBar.tsx`.
+- **Hours**: 1.5
+
+### T3.29 — `TraceCard.tsx` component
+
+- [ ] **@claude**
+- **Deliverable**: `nocap-frontend/src/components/dashboard/TraceCard.tsx`. Single card UI:
+  - Top: verdict icon (🟢 / 🔴 / 🟡) + verdict text in Inter Bold, confidence on the right (Bold for >0.8 per Design System)
+  - Middle: paper title (or arxiv ID + paper_section), function name in mono
+  - Bottom: timestamp (relative — "5 min ago"), action button "View issue →" linking to `/trace/<trace_id>`
+  - Hover: subtle elevation via `--secondary` background, no color shift
+  - Click: navigates to detail page
+- **Acceptance**: passing a trace summary to the component renders the card. Click navigates correctly. Hover shows subtle elevation.
+- **Files touched**: `nocap-frontend/src/components/dashboard/TraceCard.tsx`.
+- **Hours**: 1
+
+### T3.30 — Trace detail page
+
+- [ ] **@claude**
+- **Deliverable**: `nocap-frontend/src/app/trace/[id]/page.tsx`. Composes:
+  - Header: verdict icon + headline ("Anomaly detected" / "Implementation matches paper" / "Inconclusive") + confidence
+  - Inline summary: arxiv link + paper section + function name + trace_id (with copy button) + replay button
+  - `<PaperCodeViewer />` (Devin's T3.25) — side-by-side
+  - Anomaly residual block (only if verdict=anomaly): KaTeX-rendered residual + Critic feedback in italic
+  - VIGIL audit panel: 3 role bullets with check/cross icons
+  - `<TimingChart />` (Devin's T3.26)
+  - Collapsible JSONL events log at the bottom
+- **Acceptance**: visiting `/trace/<known-trace-id>` renders the full page. Replay button POSTs to `/api/traces/:id/replay` and navigates to the new trace_id on success.
+- **Files touched**: `nocap-frontend/src/app/trace/[id]/page.tsx`, `nocap-frontend/src/components/trace/AnomalyPanel.tsx`, `nocap-frontend/src/components/trace/VigilAuditPanel.tsx`.
+- **Hours**: 1.5
+
+### T3.31 — API client (TanStack Query)
+
+- [ ] **@claude**
+- **Deliverable**: `nocap-frontend/src/lib/api.ts` with TanStack Query hooks:
+  - `useTraces(filters)` → `GET /api/traces` with server-side pagination
+  - `useTrace(traceId)` → `GET /api/traces/:trace_id` with cache key
+  - `useReplay()` → mutation that POSTs `/api/traces/:trace_id/replay`
+  - `getPdfUrl(arxivId)` → returns the proxied PDF URL string for react-pdf
+  - All point at `process.env.NEXT_PUBLIC_API_URL` (default `https://api.nocap.wiki`)
+- **Acceptance**: dashboard page (T3.28) and trace detail page (T3.30) use these hooks and render real data when the gateway is up.
+- **Files touched**: `nocap-frontend/src/lib/api.ts`, `nocap-frontend/src/app/layout.tsx` (QueryClient provider), `package.json` (`@tanstack/react-query`).
+- **Hours**: 0.5
+
+### T3.32 — Branding cleanup: drop `~`, lock cap-emoji wordmark
+
+- [ ] **@claude**
+- **Deliverable**: 
+  1. Find and delete every reference to the `~` (tilde) logo across `nocap-frontend/` — nav bar, favicon SVG, hero centerpiece, etc. Replace with the cap-emoji wordmark "NoCap🧢" (cap overlapping the `p`) consistently.
+  2. Update `../../30 - Product/Design System.md` "Logo" section: replace `~` rules with cap-emoji wordmark rules. Document size/weight/color tokens for nav/hero/favicon.
+  3. Update favicon SVG to render the cap emoji instead of the tilde character.
+- **Acceptance**: grep `nocap-frontend/` for `'~'` returns no logo references; landing + dashboard + trace pages all use the cap-emoji wordmark; favicon shows the cap.
+- **Files touched**: `nocap-frontend/src/components/Logo.tsx` (or wherever the wordmark lives), `nocap-frontend/public/favicon.ico` + `favicon.svg`, `30 - Product/Design System.md`.
+- **Hours**: 0.5
+
+### T3.33 — Slack "View Issue" button → trace detail page
+
+- [ ] **@claude**
+- **Deliverable**: update `nocap-gateway/src/routes/slack.rs` Block Kit verdict rendering:
+  - Rename the "Replay trace" button to "View Issue"
+  - Set its `url` field to `https://nocap.wiki/trace/<trace_id>` (Slack opens external URLs natively when `url` is set on a button — no `action_id` dispatch needed)
+  - Remove the old `view_trace` action handler in interactivity (now obsolete since the button is a direct link)
+  - Keep "Approve anyway" button as-is
+- **Acceptance**: a fresh `/nocap verify-impl` Slack run returns a verdict with a "View Issue" button; clicking it opens `nocap.wiki/trace/<trace_id>` in the browser, which renders the detail page.
+- **Files touched**: `nocap-gateway/src/routes/slack.rs`.
+- **Hours**: 0.3
+
+### T3.34 — Final integration smoke
+
+- [ ] **@user**
+- **Deliverable**: end-to-end flow from a phone or laptop:
+  1. Open `nocap.wiki` → landing renders
+  2. Click "Try /nocap in our Slack" → joins workspace
+  3. Run `/nocap verify-impl 1412.6980 https://github.com/.../adam_buggy.py` in Slack
+  4. See verdict appear within 30s with "View Issue" button
+  5. Click "View Issue" → `nocap.wiki/trace/<trace_id>` loads with side-by-side paper PDF + code + residual
+  6. Open `nocap.wiki/dashboard` in another tab → see the new trace card
+- **Acceptance**: all 6 steps work without intervention. Screen recording saved to `docs/screenshots/phase3-dashboard-demo.mp4`.
+- **Hours**: 0.5
+
+---
+
 ## Phase 3 — done when
+
+- [x] T3.0–T3.19 all checked
+- [ ] T3.21 (landing) ✅, T3.22 (deploy + DNS), T3.23–T3.33 (dashboard MVP) all checked
+- [ ] T3.34 (final integration smoke) recording exists
+- All sponsor tracks have at least one screenshot in `docs/screenshots/`
+
+---
+
+## ORIGINAL Phase 3 — done when (preserved for context, mostly superseded)
 
 - [x] T3.0–T3.19 all checked
 - `nocap.wiki` Lighthouse 95+ all categories
