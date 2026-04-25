@@ -152,7 +152,7 @@ That output proves the entire council works. No Slack, no frontend, no MCP — j
 
 ### T1.8 — `spec.py` (Formulator role, Flash-Lite)
 
-- [ ] **@claude**
+- [x] **@claude**
 - **Deliverable**: `nocap_council/spec.py` with `extract_claim(paper_url, code_str, user_msg=None) -> {paper_section, claimed_equations, claimed_function, claimed_hyperparams}` calling `client.call_json("gemini-2.5-flash-lite", prompt_from_formulator_txt, ...)`.
 - **Acceptance**: on the chosen demo paper + Claude Code's implementation, returns a structured JSON pinning the claim to specific paper sections.
 - **Files touched**: `nocap-council/nocap_council/spec.py`.
@@ -161,7 +161,7 @@ That output proves the entire council works. No Slack, no frontend, no MCP — j
 
 ### T1.9 — `plan.py` (Planner role, Gemma 4)
 
-- [ ] **@claude**
+- [x] **@claude**
 - **Deliverable**: `nocap_council/plan.py` with `generate_strategies(spec) -> [strategy1, strategy2, strategy3]` always returning exactly 3.
 - **Acceptance**: returns 3 distinct strategies, each tagged `symbolic | numerical | structural | hyperparametric`.
 - **Files touched**: `nocap-council/nocap_council/plan.py`.
