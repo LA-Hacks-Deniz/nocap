@@ -2,18 +2,30 @@
 
 // Owner: DEVIN — Phase 3 task T3.28
 //
-// Public dashboard at nocap.wiki/dashboard.
+// Split-pane dashboard at nocap.wiki/dashboard.
 //
-// Layout: sticky cap-emoji nav → "All verifications" header → 4-card
-// stats row → filter bar → responsive 3-col grid of <TraceCard />.
-// Stats are derived from the FILTERED list so the user can scope
-// "Anomalies caught" to e.g. last 24h.
+//   ┌──────────── header (cap-emoji nav) ────────────┐
+//   │                                                 │
+//   │  ┌── IssueList ──┐  ┌── IssueDetail ─────────┐ │
+//   │  │ search        │  │ verdict header         │ │
+//   │  │ filter chip   │  │ issue description card │ │
+//   │  │ row 1 (sel)   │  │ anomaly evidence       │ │
+//   │  │ row 2         │  │ code location          │ │
+//   │  │ row 3         │  │ research paper + PDF   │ │
+//   │  │ ...           │  │ vigil audit / timing   │ │
+//   │  └───────────────┘  └────────────────────────┘ │
+//   └─────────────────────────────────────────────────┘
+//
+// URL: /dashboard?id=<trace_id> — deep links into a specific issue.
+// First load with no `id` query param auto-selects the most recent
+// trace in the filtered list.
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useMemo, useState } from "react";
 
-import { TraceCard } from "@/components/dashboard/TraceCard";
-import { Card, CardContent } from "@/components/ui/card";
+import { IssueDetail } from "@/components/dashboard/IssueDetail";
+import { IssueList } from "@/components/dashboard/IssueList";
 import { useTraces, type TraceFilters, type Verdict } from "@/lib/api";
 
 const NAV_LINKS = [
@@ -21,87 +33,97 @@ const NAV_LINKS = [
   { href: "https://devpost.com/", label: "Devpost" },
 ];
 
-const VERDICT_OPTIONS: { value: "all" | Verdict; label: string }[] = [
-  { value: "all", label: "All verdicts" },
-  { value: "pass", label: "Pass" },
-  { value: "anomaly", label: "Anomaly" },
-  { value: "inconclusive", label: "Inconclusive" },
-];
-
-const RANGE_OPTIONS: { value: NonNullable<TraceFilters["range"]>; label: string }[] = [
-  { value: "all", label: "All time" },
-  { value: "24h", label: "Last 24h" },
-  { value: "7d", label: "Last 7 days" },
-];
-
-function StatsRow({ rows }: { rows: ReturnType<typeof useTraces>["filtered"] }) {
-  const total = rows.length;
-  const anomalies = rows.filter((r) => r.verdict === "anomaly").length;
-  const passes = rows.filter((r) => r.verdict === "pass").length;
-  const ratable = rows.filter((r) => r.verdict === "pass" || r.verdict === "anomaly").length;
-  const passRate = ratable > 0 ? `${Math.round((passes / ratable) * 100)}%` : "—";
-  // The summary endpoint omits elapsed_seconds; show "—" until full doc loads.
-  // (TraceSummary intentionally stays minimal; T3.26 surfaces per-stage timing
-  // on the trace detail page where the full doc is available.)
-  const avgWall = "—";
-
-  const cards = [
-    { label: "Total checks", value: String(total) },
-    { label: "Anomalies caught", value: String(anomalies) },
-    { label: "Pass rate", value: passRate },
-    { label: "Avg wall clock", value: avgWall },
-  ];
-
+export default function DashboardPage() {
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-      {cards.map((c) => (
-        <Card key={c.label} size="sm" className="gap-1">
-          <CardContent>
-            <div className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
-              {c.label}
-            </div>
-            <div className="mt-1 text-2xl font-bold tabular-nums tracking-[-0.02em] text-foreground">
-              {c.value}
-            </div>
-          </CardContent>
-        </Card>
-      ))}
-    </div>
+    <Suspense
+      fallback={
+        <div className="flex min-h-dvh items-center justify-center bg-background text-sm text-muted-foreground">
+          Loading dashboard…
+        </div>
+      }
+    >
+      <DashboardInner />
+    </Suspense>
   );
 }
 
-export default function DashboardPage() {
-  const [verdict, setVerdict] = useState<"all" | Verdict>("all");
-  const [arxivIdQuery, setArxivIdQuery] = useState("");
-  const [range, setRange] = useState<NonNullable<TraceFilters["range"]>>("all");
+function DashboardInner() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const selectedId = searchParams.get("id");
+
+  const [verdictFilter, setVerdictFilter] = useState<"all" | Verdict>("all");
+  const [search, setSearch] = useState("");
 
   const filters: TraceFilters = useMemo(
     () => ({
-      verdict: verdict === "all" ? null : verdict,
-      arxivIdQuery,
-      range,
+      verdict: verdictFilter === "all" ? null : verdictFilter,
+      arxivIdQuery: null,
+      range: "all",
     }),
-    [verdict, arxivIdQuery, range],
+    [verdictFilter],
   );
 
-  const { data, error, isLoading, filtered } = useTraces({ limit: 200, filters });
+  const { data, error, isLoading, filtered } = useTraces({
+    limit: 200,
+    filters,
+  });
+
+  // Apply free-text search on top of the verdict-filtered set.
+  const visibleRows = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return filtered;
+    return filtered.filter((r) => {
+      return (
+        (r.arxiv_id ?? "").toLowerCase().includes(q) ||
+        (r.function_name ?? "").toLowerCase().includes(q) ||
+        (r.paper_section ?? "").toLowerCase().includes(q) ||
+        (r.verdict ?? "").toLowerCase().includes(q) ||
+        (r.trace_id ?? "").toLowerCase().includes(q)
+      );
+    });
+  }, [filtered, search]);
+
+  // Auto-select the first row if the URL has no id (or the id no longer
+  // appears in the filtered list).
+  useEffect(() => {
+    if (visibleRows.length === 0) return;
+    const ids = new Set(visibleRows.map((r) => r.trace_id ?? ""));
+    if (!selectedId || !ids.has(selectedId)) {
+      const first = visibleRows[0]?.trace_id;
+      if (first) {
+        router.replace(`/dashboard?id=${first}`, { scroll: false });
+      }
+    }
+  }, [visibleRows, selectedId, router]);
+
+  const onSelect = (id: string) => {
+    router.replace(`/dashboard?id=${id}`, { scroll: false });
+  };
 
   return (
-    <div className="min-h-dvh bg-background text-foreground">
+    <div className="flex min-h-dvh flex-col bg-background text-foreground">
       <header className="sticky top-0 z-30 border-b border-border bg-background/92 backdrop-blur-md">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-5 sm:px-8">
-          <Link
-            aria-label="NoCap home"
-            className="select-none text-2xl leading-none"
-            href="/"
-          >
-            🧢
-          </Link>
-          <nav className="flex items-center gap-5 text-sm text-muted-foreground">
+        <div className="flex items-center justify-between px-6 py-4 sm:px-8">
+          <div className="flex items-center gap-6">
             <Link
-              className="font-medium text-foreground"
-              href="/dashboard"
+              aria-label="NoCap home"
+              className="select-none text-2xl leading-none"
+              href="/"
             >
+              🧢
+            </Link>
+            <div className="hidden flex-col leading-tight sm:flex">
+              <span className="text-sm font-bold tracking-[-0.01em] text-foreground">
+                Research paper validator
+              </span>
+              <span className="text-xs text-muted-foreground">
+                Compare implementations against research paper specifications
+              </span>
+            </div>
+          </div>
+          <nav className="flex items-center gap-5 text-sm text-muted-foreground">
+            <Link className="font-medium text-foreground" href="/dashboard">
               Dashboard
             </Link>
             {NAV_LINKS.map((link) => (
@@ -119,84 +141,47 @@ export default function DashboardPage() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-7xl px-6 py-10 sm:px-8">
-        <h1 className="text-3xl font-bold tracking-[-0.04em] sm:text-4xl">
-          All verifications
-        </h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Every paper-vs-code check the council has run, newest first.
-        </p>
-
-        <div className="mt-8">
-          <StatsRow rows={filtered} />
-        </div>
-
-        <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center">
-          <select
-            aria-label="Verdict filter"
-            value={verdict}
-            onChange={(e) => setVerdict(e.target.value as "all" | Verdict)}
-            className="h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-          >
-            {VERDICT_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-          <input
-            aria-label="Filter by arXiv ID"
-            placeholder="Filter by arXiv ID, e.g. 1412.6980"
-            value={arxivIdQuery}
-            onChange={(e) => setArxivIdQuery(e.target.value)}
-            className="h-10 flex-1 rounded-md border border-border bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-          />
-          <select
-            aria-label="Date range filter"
-            value={range}
-            onChange={(e) =>
-              setRange(e.target.value as NonNullable<TraceFilters["range"]>)
-            }
-            className="h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-          >
-            {RANGE_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <section className="mt-8">
-          {isLoading ? (
-            <div className="rounded-lg border border-dashed border-border px-6 py-16 text-center text-sm text-muted-foreground">
-              Loading verifications…
-            </div>
-          ) : error ? (
-            <div className="rounded-lg border border-dashed border-border px-6 py-16 text-center text-sm text-muted-foreground">
-              Couldn&apos;t reach the gateway: {error.message}
-            </div>
-          ) : (data ?? []).length === 0 ? (
-            <div className="rounded-lg border border-dashed border-border px-6 py-16 text-center text-sm text-muted-foreground">
-              No verifications yet — try{" "}
-              <code className="rounded bg-secondary px-1.5 py-0.5 font-mono text-xs">
-                /nocap verify-impl
-              </code>{" "}
-              in Slack.
-            </div>
-          ) : filtered.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-border px-6 py-16 text-center text-sm text-muted-foreground">
-              No verifications match the current filters.
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-              {filtered.map((row) => (
-                <TraceCard key={row.trace_id ?? Math.random()} trace={row} />
-              ))}
-            </div>
-          )}
-        </section>
+      <main className="flex min-h-0 flex-1 flex-col lg:flex-row">
+        {isLoading ? (
+          <div className="flex flex-1 items-center justify-center px-6 py-16 text-sm text-muted-foreground">
+            Loading verifications…
+          </div>
+        ) : error ? (
+          <div className="flex flex-1 items-center justify-center px-6 py-16 text-sm text-muted-foreground">
+            Couldn&apos;t reach the gateway: {error.message}
+          </div>
+        ) : (data ?? []).length === 0 ? (
+          <EmptyDashboard />
+        ) : (
+          <>
+            <IssueList
+              rows={visibleRows}
+              selectedId={selectedId}
+              onSelect={onSelect}
+              search={search}
+              onSearchChange={setSearch}
+              verdictFilter={verdictFilter}
+              onVerdictFilterChange={setVerdictFilter}
+              totalCount={(data ?? []).length}
+            />
+            <section className="min-h-0 flex-1 overflow-y-auto bg-background">
+              <IssueDetail traceId={selectedId} />
+            </section>
+          </>
+        )}
       </main>
+    </div>
+  );
+}
+
+function EmptyDashboard() {
+  return (
+    <div className="flex flex-1 items-center justify-center px-6 py-16 text-center text-sm text-muted-foreground">
+      No verifications yet — try{" "}
+      <code className="mx-1 rounded bg-secondary px-1.5 py-0.5 font-mono text-xs">
+        /nocap verify-impl
+      </code>{" "}
+      in Slack.
     </div>
   );
 }
