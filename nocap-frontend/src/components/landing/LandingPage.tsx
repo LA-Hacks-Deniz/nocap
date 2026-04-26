@@ -113,6 +113,12 @@ export function LandingPage() {
                 {link.label}
               </Link>
             ))}
+            <Link
+              className="rounded-full border border-border bg-foreground px-4 py-1.5 text-xs font-medium text-background transition-colors hover:bg-foreground/90"
+              href="/api/auth/login"
+            >
+              Sign in
+            </Link>
           </nav>
         </div>
       </header>
