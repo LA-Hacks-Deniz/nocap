@@ -1,11 +1,12 @@
 "use client";
 
-// Owner: DEVIN — Phase 3 task T3.31
+// Owner: DEVIN — Phase 3 task T3.31; Auth0 OAuth wiring adds <UserProvider>
 //
-// Client-side QueryClient provider so server components in app/ can
-// import this single boundary and consume `useTraces` / `useTrace` /
-// `useReplay` further down the tree.
+// Client-side QueryClient + Auth0 UserProvider so the dashboard can read
+// the current user via `useUser()` and TanStack Query hooks below this
+// boundary share a single QueryClient.
 
+import { UserProvider } from "@auth0/nextjs-auth0/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
 
@@ -23,5 +24,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
         },
       }),
   );
-  return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+  return (
+    <UserProvider>
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    </UserProvider>
+  );
 }

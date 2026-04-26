@@ -16,8 +16,12 @@ import {
   type UseQueryResult,
 } from "@tanstack/react-query";
 
-export const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL ?? "https://api.nocap.wiki";
+// Browser fetches go through the Next.js auth-aware server proxy at
+// /api/proxy/* (defined in app/api/proxy/[...path]/route.ts). The proxy
+// validates the Auth0 session, attaches the user's access token as
+// `Authorization: Bearer <jwt>`, and forwards to the Rust gateway at
+// NOCAP_GATEWAY_URL. Override via NEXT_PUBLIC_API_URL only in tests / SSR.
+export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "/api/proxy";
 
 // ---------------------------------------------------------------------------
 // Types — minimal shape the dashboard relies on; trace-detail consumes the

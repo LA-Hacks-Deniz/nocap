@@ -24,6 +24,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useState } from "react";
 
+import { UserBadge } from "@/components/auth/UserBadge";
 import { IssueDetail } from "@/components/dashboard/IssueDetail";
 import { IssueList } from "@/components/dashboard/IssueList";
 import { useTraces, type TraceFilters, type Verdict } from "@/lib/api";
@@ -137,6 +138,8 @@ function DashboardInner() {
                 {link.label}
               </Link>
             ))}
+            <span aria-hidden="true" className="h-4 w-px bg-border" />
+            <UserBadge />
           </nav>
         </div>
       </header>
