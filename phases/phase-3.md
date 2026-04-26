@@ -294,7 +294,7 @@ Phase 3 ships when a judge can hit `nocap.wiki` from their phone and watch a liv
 
 ### T3.23 — Gateway trace API endpoints
 
-- [ ] **@devin**
+- [x] **@devin**
 - **Deliverable**: `nocap-gateway/src/routes/traces.rs` with three endpoints:
   - `GET /api/traces?limit=N&offset=N` — paginated list of trace summaries (trace_id, arxiv_id, function_name, verdict, confidence, paper_section, created_at). Default limit=50, max=200. Sorted by created_at desc.
   - `GET /api/traces/:trace_id` — full trace document from Mongo by trace_id.
@@ -310,7 +310,7 @@ Phase 3 ships when a judge can hit `nocap.wiki` from their phone and watch a liv
 
 ### T3.24 — Persist `code_str` in trace docs
 
-- [ ] **@devin**
+- [x] **@devin**
 - **Deliverable**: update `mongo_log.log_verdict` and `orchestrator.verify` so the persisted trace document includes `code_str` (the raw Python source the gateway received). Currently the orchestrator's `verify()` doesn't carry `code_str` through to the augmented dict; needs a small refactor to plumb it through.
 - **Acceptance**: query a trace doc post-Slack-run via mongosh, confirm `code_str` field is present and non-empty (the original Python source the user pasted).
 - **Files touched**: `nocap-council/nocap_council/orchestrator.py` (add `code_str` to augmented dict), `nocap-council/nocap_council/mongo_log.py` (no change if it stores the dict verbatim).
@@ -318,7 +318,7 @@ Phase 3 ships when a judge can hit `nocap.wiki` from their phone and watch a liv
 
 ### T3.25 — `PaperCodeViewer.tsx` component
 
-- [ ] **@devin**
+- [x] **@devin**
 - **Deliverable**: `nocap-frontend/src/components/trace/PaperCodeViewer.tsx`. Side-by-side layout (50/50 desktop, stacked mobile):
   - Left pane: react-pdf renders the paper PDF (fetched from `api.nocap.wiki/api/papers/<arxiv_id>/pdf`). User can scroll, zoom basic. Highlight the equation that caused the anomaly (best-effort: scroll to the section name from `claim.paper_section`).
   - Right pane: react-syntax-highlighter renders `code_str` with Python syntax highlighting. Highlight the line that contains the buggy assignment (use the `code_line` from the verdict if available; otherwise the line containing the target_var name).
@@ -330,7 +330,7 @@ Phase 3 ships when a judge can hit `nocap.wiki` from their phone and watch a liv
 
 ### T3.26 — `TimingChart.tsx` component
 
-- [ ] **@devin**
+- [x] **@devin**
 - **Deliverable**: `nocap-frontend/src/components/trace/TimingChart.tsx`. Horizontal bar chart of per-stage timings using `recharts`. Each bar is a stage (paper_extract / spec / plan / code_extract / code[*] / polygraph), labeled with stage name + ms. Total wall clock at the bottom. Grayscale only (no color); use weight + size for hierarchy per Design System.
 - **Acceptance**: passing a trace doc with `evidences[].method_used` + per-stage ms field renders the chart correctly. All 7-9 stages visible. No color accents.
 - **Files touched**: `nocap-frontend/src/components/trace/TimingChart.tsx`, `package.json` (recharts).
@@ -338,7 +338,7 @@ Phase 3 ships when a judge can hit `nocap.wiki` from their phone and watch a liv
 
 ### T3.27 — Replay endpoint
 
-- [ ] **@devin**
+- [x] **@devin**
 - **Deliverable**: `nocap-gateway/src/routes/replay.rs` with `POST /api/traces/:trace_id/replay`. Reads the trace doc from Mongo, extracts `arxiv_id` + `code_str` + `function_name` + `claim`, calls the existing `/api/verify-impl` endpoint internally (or directly spawns the council subprocess), returns the new `trace_id`.
 - **Acceptance**: `curl -X POST https://api.nocap.wiki/api/traces/<known-trace-id>/replay` returns `{"trace_id": "<new-uuid>"}` and a fresh trace doc lands in Mongo within 30s.
 - **Files touched**: `nocap-gateway/src/routes/replay.rs`, route mount in `main.rs`.
@@ -346,7 +346,7 @@ Phase 3 ships when a judge can hit `nocap.wiki` from their phone and watch a liv
 
 ### T3.28 — Dashboard page
 
-- [ ] **@claude**
+- [x] **@devin**
 - **Deliverable**: `nocap-frontend/src/app/dashboard/page.tsx`. Full page:
   - Header: nav (cap-emoji wordmark + "Dashboard" / "GitHub" / "Devpost"), section title "All verifications"
   - Stats row: 4 cards — Total checks, Anomalies caught, Pass rate, Avg wall clock — pulled from the trace list
@@ -359,7 +359,7 @@ Phase 3 ships when a judge can hit `nocap.wiki` from their phone and watch a liv
 
 ### T3.29 — `TraceCard.tsx` component
 
-- [ ] **@claude**
+- [x] **@devin**
 - **Deliverable**: `nocap-frontend/src/components/dashboard/TraceCard.tsx`. Single card UI:
   - Top: verdict icon (🟢 / 🔴 / 🟡) + verdict text in Inter Bold, confidence on the right (Bold for >0.8 per Design System)
   - Middle: paper title (or arxiv ID + paper_section), function name in mono
@@ -372,7 +372,7 @@ Phase 3 ships when a judge can hit `nocap.wiki` from their phone and watch a liv
 
 ### T3.30 — Trace detail page
 
-- [ ] **@claude**
+- [x] **@devin**
 - **Deliverable**: `nocap-frontend/src/app/trace/[id]/page.tsx`. Composes:
   - Header: verdict icon + headline ("Anomaly detected" / "Implementation matches paper" / "Inconclusive") + confidence
   - Inline summary: arxiv link + paper section + function name + trace_id (with copy button) + replay button
@@ -387,7 +387,7 @@ Phase 3 ships when a judge can hit `nocap.wiki` from their phone and watch a liv
 
 ### T3.31 — API client (TanStack Query)
 
-- [ ] **@claude**
+- [x] **@devin**
 - **Deliverable**: `nocap-frontend/src/lib/api.ts` with TanStack Query hooks:
   - `useTraces(filters)` → `GET /api/traces` with server-side pagination
   - `useTrace(traceId)` → `GET /api/traces/:trace_id` with cache key
@@ -400,7 +400,7 @@ Phase 3 ships when a judge can hit `nocap.wiki` from their phone and watch a liv
 
 ### T3.32 — Branding cleanup: drop `~`, lock cap-emoji wordmark
 
-- [ ] **@claude**
+- [x] **@devin**
 - **Deliverable**: 
   1. Find and delete every reference to the `~` (tilde) logo across `nocap-frontend/` — nav bar, favicon SVG, hero centerpiece, etc. Replace with the cap-emoji wordmark "NoCap🧢" (cap overlapping the `p`) consistently.
   2. Update `../../30 - Product/Design System.md` "Logo" section: replace `~` rules with cap-emoji wordmark rules. Document size/weight/color tokens for nav/hero/favicon.
@@ -411,7 +411,7 @@ Phase 3 ships when a judge can hit `nocap.wiki` from their phone and watch a liv
 
 ### T3.33 — Slack "View Issue" button → trace detail page
 
-- [ ] **@claude**
+- [x] **@devin**
 - **Deliverable**: update `nocap-gateway/src/routes/slack.rs` Block Kit verdict rendering:
   - Rename the "Replay trace" button to "View Issue"
   - Set its `url` field to `https://nocap.wiki/trace/<trace_id>` (Slack opens external URLs natively when `url` is set on a button — no `action_id` dispatch needed)

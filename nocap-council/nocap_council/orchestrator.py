@@ -710,6 +710,9 @@ def verify(
     strategies: list[Strategy] = []
     evidences: list[dict[str, Any]] = []
     fn_name: str | None = None
+    # T3.24: per-stage wall-clock (ms) for the dashboard `<TimingChart />`.
+    # Insertion order = stage order, so the chart renders chronologically.
+    stage_timings: dict[str, int] = {}
 
     # Stage 1: paper_extract
     s0 = time.perf_counter()
@@ -718,6 +721,7 @@ def verify(
         paper = paper_extract.parse_paper(src)
     except Exception as exc:
         ms = int((time.perf_counter() - s0) * 1000)
+        stage_timings["paper_extract"] = ms
         tb = traceback.format_exc()
         _stage(stream, "paper_extract", "error", ms, info={"error": str(exc)})
         return _inconclusive(
@@ -729,8 +733,11 @@ def verify(
             strategies=strategies,
             evidences=evidences,
             function_name=function_name,
+            code_str=code_str,
+            stage_timings=stage_timings,
         )
     ms = int((time.perf_counter() - s0) * 1000)
+    stage_timings["paper_extract"] = ms
     section_keys = [k for k in paper.keys() if not k.startswith("_")]
     _stage(
         stream,
@@ -762,6 +769,7 @@ def verify(
         )
     except Exception as exc:
         ms = int((time.perf_counter() - s0) * 1000)
+        stage_timings["spec"] = ms
         tb = traceback.format_exc()
         _stage(stream, "spec", "error", ms, info={"error": str(exc)})
         return _inconclusive(
@@ -773,8 +781,11 @@ def verify(
             strategies=strategies,
             evidences=evidences,
             function_name=function_name,
+            code_str=code_str,
+            stage_timings=stage_timings,
         )
     ms = int((time.perf_counter() - s0) * 1000)
+    stage_timings["spec"] = ms
     _stage(
         stream,
         "spec",
@@ -800,6 +811,7 @@ def verify(
         strategies = plan.generate_strategies(claim)
     except Exception as exc:
         ms = int((time.perf_counter() - s0) * 1000)
+        stage_timings["plan"] = ms
         tb = traceback.format_exc()
         _stage(stream, "plan", "error", ms, info={"error": str(exc)})
         return _inconclusive(
@@ -811,8 +823,11 @@ def verify(
             strategies=strategies,
             evidences=evidences,
             function_name=function_name,
+            code_str=code_str,
+            stage_timings=stage_timings,
         )
     ms = int((time.perf_counter() - s0) * 1000)
+    stage_timings["plan"] = ms
     _stage(
         stream,
         "plan",
@@ -835,6 +850,7 @@ def verify(
         code_env = code_extract.code_to_sympy(code_str, fn_name)
     except Exception as exc:
         ms = int((time.perf_counter() - s0) * 1000)
+        stage_timings["code_extract"] = ms
         tb = traceback.format_exc()
         _stage(stream, "code_extract", "error", ms, info={"error": str(exc)})
         return _inconclusive(
@@ -846,8 +862,11 @@ def verify(
             strategies=strategies,
             evidences=evidences,
             function_name=fn_name,
+            code_str=code_str,
+            stage_timings=stage_timings,
         )
     ms = int((time.perf_counter() - s0) * 1000)
+    stage_timings["code_extract"] = ms
     _stage(
         stream,
         "code_extract",
@@ -938,6 +957,7 @@ def verify(
             )
         except Exception as exc:
             ms = int((time.perf_counter() - s0) * 1000)
+            stage_timings[f"code[{i}:{strategy.kind}]"] = ms
             tb = traceback.format_exc()
             _stage(
                 stream, "code", "error", ms, strategy_idx=i, info={"kind": strategy.kind, "error": str(exc)}
@@ -958,6 +978,7 @@ def verify(
             )
             continue
         ms = int((time.perf_counter() - s0) * 1000)
+        stage_timings[f"code[{i}:{strategy.kind}]"] = ms
         evidences.append(ev)
         # T1.22: ``equivalent=None`` signals a synthetic no-signal
         # evidence (every equation skipped). Surface as ``status="skipped"``
@@ -994,6 +1015,7 @@ def verify(
         polygraph_dict = polygraph_verify(claim, evidences)
     except Exception as exc:
         ms = int((time.perf_counter() - s0) * 1000)
+        stage_timings["polygraph"] = ms
         tb = traceback.format_exc()
         _stage(stream, "polygraph", "error", ms, info={"error": str(exc)})
         return _inconclusive(
@@ -1005,8 +1027,11 @@ def verify(
             strategies=strategies,
             evidences=evidences,
             function_name=fn_name,
+            code_str=code_str,
+            stage_timings=stage_timings,
         )
     ms = int((time.perf_counter() - s0) * 1000)
+    stage_timings["polygraph"] = ms
     _stage(
         stream,
         "polygraph",
@@ -1027,6 +1052,11 @@ def verify(
         "elapsed_seconds": round(elapsed, 3),
         "arxiv_id": paper_arxiv_id,
         "function_name": fn_name,
+        # T3.24: persist the original Python source so the dashboard's
+        # <PaperCodeViewer /> can render it side-by-side with the paper
+        # PDF, and per-stage timings so <TimingChart /> can render bars.
+        "code_str": code_str,
+        "stage_timings": stage_timings,
     }
     _persist_trace(out)
     _stage(
@@ -1053,6 +1083,8 @@ def _inconclusive(
     strategies: list[Strategy] | None = None,
     evidences: list[dict[str, Any]] | None = None,
     function_name: str | None = None,
+    code_str: str | None = None,
+    stage_timings: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     elapsed = time.perf_counter() - t_start
     out: dict[str, Any] = {
@@ -1066,6 +1098,10 @@ def _inconclusive(
         "elapsed_seconds": round(elapsed, 3),
         "arxiv_id": arxiv_id,
         "function_name": function_name,
+        # T3.24: surface code_str + per-stage timings even on early-failure
+        # paths so the dashboard can still render what data we have.
+        "code_str": code_str,
+        "stage_timings": dict(stage_timings or {}),
         "error": tb,
     }
     _persist_trace(out)

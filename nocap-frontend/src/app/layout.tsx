@@ -1,7 +1,10 @@
-// Owner: DEVIN — Phase 3 task T3.21
+// Owner: DEVIN — Phase 3 task T3.21 (T3.31 wraps Providers; T3.30 imports KaTeX CSS)
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
+import "katex/dist/katex.min.css";
+
+import { Providers } from "@/components/providers";
 
 const inter = Inter({
   display: "swap",
@@ -34,7 +37,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className={`${inter.variable} scroll-smooth antialiased`}>
-      <body>{children}</body>
+      <body>
+        <Providers>{children}</Providers>
+      </body>
     </html>
   );
 }

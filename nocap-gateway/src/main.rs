@@ -1,7 +1,9 @@
 // Owner: CLAUDE — Phase 2 task T2.8 (T2.9 wires /verify-impl)
+// Phase 3 T3.23 mounts /api/traces, /api/traces/:id, /api/papers/:arxiv_id/pdf
+// + permissive CORS so the Vercel-hosted dashboard can read from a
+// different origin (`https://nocap.wiki` → `https://api.nocap.wiki`).
 //
-// Axum perimeter. T2.10 mounts the Slack endpoints, T2.15 fans out to
-// Discord. Routes live under `routes/`.
+// Axum perimeter. Routes live under `routes/`.
 
 mod routes;
 
@@ -9,6 +11,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use tower_http::cors::CorsLayer;
 use tracing_subscriber::EnvFilter;
 
 const BIND_ADDR: &str = "0.0.0.0:8787";
@@ -29,7 +32,15 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         .route("/health", get(health))
         .route("/verify-impl", post(routes::verify::verify_impl))
-        .route("/slack-event", post(routes::slack::slack_event));
+        .route("/slack-event", post(routes::slack::slack_event))
+        .route("/api/traces", get(routes::traces::list_traces))
+        .route("/api/traces/:trace_id", get(routes::traces::get_trace))
+        .route("/api/traces/:trace_id/replay", post(routes::replay::replay_trace))
+        .route("/api/papers/:arxiv_id/pdf", get(routes::traces::get_paper_pdf))
+        // Permissive CORS for the hackathon — Vercel-hosted dashboard at
+        // nocap.wiki calls api.nocap.wiki cross-origin. Tighten to
+        // `Access-Control-Allow-Origin: https://nocap.wiki` post-deploy.
+        .layer(CorsLayer::permissive());
 
     let listener = tokio::net::TcpListener::bind(BIND_ADDR).await?;
     tracing::info!(addr = %BIND_ADDR, "nocap-gateway listening");
