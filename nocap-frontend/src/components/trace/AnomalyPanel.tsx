@@ -6,33 +6,63 @@
 // Renders the symbolic residual via KaTeX on a dark #1a1a1a surface
 // (the ONE allowed dark surface, per Design System) and the Critic's
 // natural-language feedback in italic underneath.
+//
+// Empty failed evidences (e.g. `kind=symbolic, method_used=failed` with
+// no residual / critic_feedback / target_var) are suppressed — they
+// add noise without conveying anything.
 
 import { BlockMath } from "react-katex";
 
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import type { Evidence, TraceDoc } from "@/lib/api";
 
-function failingEvidences(trace: TraceDoc): Evidence[] {
-  return (trace.evidences ?? []).filter((e) => e.equivalent === false);
+function hasContent(ev: Evidence): boolean {
+  const residual = typeof ev.residual === "string" && ev.residual.trim().length > 0;
+  const critic =
+    typeof ev.critic_feedback === "string" && ev.critic_feedback.trim().length > 0;
+  const target =
+    typeof ev.target_var === "string" && ev.target_var.trim().length > 0;
+  return residual || critic || target;
 }
 
-export function AnomalyPanel({ trace }: { trace: TraceDoc }) {
+function failingEvidences(trace: TraceDoc): Evidence[] {
+  return (trace.evidences ?? []).filter(
+    (e) => e.equivalent === false && hasContent(e),
+  );
+}
+
+export function AnomalyPanel({
+  trace,
+  variant = "stack",
+}: {
+  trace: TraceDoc;
+  variant?: "stack" | "compact";
+}) {
   const failing = failingEvidences(trace);
   if (trace.verdict !== "anomaly") return null;
   if (failing.length === 0) return null;
 
   return (
     <div className="space-y-4">
-      <h2 className="text-lg font-bold tracking-[-0.02em]">
-        Anomaly evidence
-      </h2>
-      {failing.map((ev, i) => (
-        <EvidenceCard key={i} ev={ev} />
-      ))}
+      <div className="flex items-baseline justify-between">
+        <h2 className="text-lg font-bold tracking-[-0.02em]">
+          Anomaly evidence
+        </h2>
+        <span className="text-xs uppercase tracking-[0.12em] text-muted-foreground">
+          {failing.length} {failing.length === 1 ? "finding" : "findings"}
+        </span>
+      </div>
+      <div className="space-y-3">
+        {failing.map((ev, i) => (
+          <EvidenceCard key={i} ev={ev} compact={variant === "compact"} />
+        ))}
+      </div>
     </div>
   );
 }
 
-function EvidenceCard({ ev }: { ev: Evidence }) {
+function EvidenceCard({ ev, compact }: { ev: Evidence; compact: boolean }) {
   const residual = typeof ev.residual === "string" ? ev.residual : null;
   const targetVar = (ev.target_var as string | null) ?? null;
   const kind = (ev.kind as string | null) ?? "?";
@@ -40,25 +70,34 @@ function EvidenceCard({ ev }: { ev: Evidence }) {
   const critic = (ev.critic_feedback as string | null) ?? null;
 
   return (
-    <div className="rounded-lg border border-border bg-background">
-      <div className="flex items-center justify-between border-b border-border px-5 py-3 text-sm">
-        <div className="flex items-center gap-2">
-          <span className="font-bold">{kind}</span>
-          {method ? (
-            <span className="text-muted-foreground">· {method}</span>
+    <Card size="sm" className="gap-3">
+      <CardHeader className="border-b pb-3">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <Badge
+              variant="outline"
+              className="text-[10px] uppercase tracking-[0.12em]"
+            >
+              {kind}
+            </Badge>
+            {method ? (
+              <span className="text-xs text-muted-foreground">
+                via {method}
+              </span>
+            ) : null}
+          </div>
+          {targetVar ? (
+            <span className="font-mono text-xs text-muted-foreground">
+              target_var = {targetVar}
+            </span>
           ) : null}
         </div>
-        {targetVar ? (
-          <span className="font-mono text-xs text-muted-foreground">
-            target_var = {targetVar}
-          </span>
-        ) : null}
-      </div>
+      </CardHeader>
 
-      <div className="space-y-4 p-5">
+      <CardContent className={compact ? "space-y-3" : "space-y-4"}>
         {residual ? (
-          <div className="rounded-md bg-[#1a1a1a] px-5 py-6 text-[#fafafa]">
-            <div className="mb-2 text-xs uppercase tracking-wider text-[#9ca3af]">
+          <div className="rounded-md bg-[#1a1a1a] px-5 py-5 text-[#fafafa]">
+            <div className="mb-2 text-[10px] uppercase tracking-[0.16em] text-[#9ca3af]">
               Residual
             </div>
             <ResidualMath src={residual} />
@@ -70,8 +109,8 @@ function EvidenceCard({ ev }: { ev: Evidence }) {
             {critic}
           </p>
         ) : null}
-      </div>
-    </div>
+      </CardContent>
+    </Card>
   );
 }
 

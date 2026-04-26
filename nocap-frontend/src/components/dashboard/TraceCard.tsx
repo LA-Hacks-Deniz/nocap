@@ -2,23 +2,25 @@
 //
 // Single trace card on the dashboard grid. Click anywhere on the card →
 // /trace/<trace_id>. Hover lifts via the secondary surface (#F5F5F5) per
-// Design System; verdict is conveyed by glyph + Inter Bold weight, not
-// by color (no accent colors anywhere).
+// Design System; verdict is conveyed by an uppercase tracked badge +
+// Inter Bold weight, not by glyph or color.
 
 import Link from "next/link";
 
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import type { TraceSummary } from "@/lib/api";
-
-const VERDICT_GLYPHS: Record<string, string> = {
-  pass: "🟢",
-  anomaly: "🔴",
-  inconclusive: "🟡",
-};
 
 const VERDICT_LABELS: Record<string, string> = {
   pass: "Implementation matches",
   anomaly: "Anomaly detected",
   inconclusive: "Inconclusive",
+};
+
+const VERDICT_BADGE: Record<string, string> = {
+  pass: "PASS",
+  anomaly: "ANOMALY",
+  inconclusive: "INCONCLUSIVE",
 };
 
 function formatRelative(iso: string | null | undefined): string {
@@ -38,8 +40,8 @@ function formatRelative(iso: string | null | undefined): string {
 
 export function TraceCard({ trace }: { trace: TraceSummary }) {
   const verdict = trace.verdict ?? "inconclusive";
-  const glyph = VERDICT_GLYPHS[verdict] ?? "⚪";
   const label = VERDICT_LABELS[verdict] ?? verdict;
+  const badge = VERDICT_BADGE[verdict] ?? verdict.toUpperCase();
   const conf = trace.confidence ?? null;
   const confPct = conf !== null ? `${Math.round(conf * 100)}%` : "—";
   const confBold = conf !== null && conf > 0.8;
@@ -49,49 +51,63 @@ export function TraceCard({ trace }: { trace: TraceSummary }) {
   return (
     <Link
       href={href}
-      className="group flex h-full flex-col justify-between gap-4 rounded-lg border border-border bg-background p-5 transition-colors hover:bg-secondary"
+      className="group block h-full transition-transform hover:-translate-y-0.5"
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <span aria-hidden className="text-base leading-none">
-            {glyph}
-          </span>
-          <span className="text-base font-bold tracking-[-0.02em] text-foreground">
-            {label}
-          </span>
-        </div>
-        <span
-          className={[
-            "shrink-0 text-sm tabular-nums text-muted-foreground",
-            confBold ? "font-bold text-foreground" : "font-medium",
-          ].join(" ")}
-        >
-          {confPct}
-        </span>
-      </div>
-
-      <div className="space-y-1.5">
-        <div className="text-sm text-foreground">
-          <span className="font-medium">{trace.arxiv_id ?? "(unknown paper)"}</span>
-          {trace.paper_section ? (
-            <span className="text-muted-foreground"> · {trace.paper_section}</span>
-          ) : null}
-        </div>
-        {trace.function_name ? (
-          <div className="font-mono text-xs text-muted-foreground">
-            {trace.function_name}
+      <Card className="h-full justify-between gap-3 transition-colors group-hover:bg-secondary">
+        <CardHeader>
+          <div className="flex items-start justify-between gap-3">
+            <div className="space-y-1">
+              <Badge
+                variant="outline"
+                className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground"
+              >
+                {badge}
+              </Badge>
+              <div className="text-base font-bold tracking-[-0.02em] text-foreground">
+                {label}
+              </div>
+            </div>
+            <span
+              className={[
+                "shrink-0 text-sm tabular-nums",
+                confBold
+                  ? "font-bold text-foreground"
+                  : "font-medium text-muted-foreground",
+              ].join(" ")}
+            >
+              {confPct}
+            </span>
           </div>
-        ) : null}
-      </div>
-
-      <div className="flex items-center justify-between border-t border-border pt-3">
-        <span className="text-xs text-muted-foreground">
-          {formatRelative(trace.created_at)}
-        </span>
-        <span className="text-sm font-medium text-foreground">
-          View issue →
-        </span>
-      </div>
+        </CardHeader>
+        <CardContent className="space-y-1.5">
+          <div className="text-sm text-foreground">
+            <span className="font-medium">
+              {trace.arxiv_id ?? "(unknown paper)"}
+            </span>
+            {trace.paper_section ? (
+              <span className="text-muted-foreground">
+                {" · "}
+                {trace.paper_section}
+              </span>
+            ) : null}
+          </div>
+          {trace.function_name ? (
+            <div className="font-mono text-xs text-muted-foreground">
+              {trace.function_name}
+            </div>
+          ) : null}
+        </CardContent>
+        <CardFooter className="border-t bg-transparent pt-3">
+          <div className="flex w-full items-center justify-between">
+            <span className="text-xs text-muted-foreground">
+              {formatRelative(trace.created_at)}
+            </span>
+            <span className="text-sm font-medium text-foreground transition-transform group-hover:translate-x-0.5">
+              View issue →
+            </span>
+          </div>
+        </CardFooter>
+      </Card>
     </Link>
   );
 }

@@ -13,6 +13,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 
 import { TraceCard } from "@/components/dashboard/TraceCard";
+import { Card, CardContent } from "@/components/ui/card";
 import { useTraces, type TraceFilters, type Verdict } from "@/lib/api";
 
 const NAV_LINKS = [
@@ -54,15 +55,16 @@ function StatsRow({ rows }: { rows: ReturnType<typeof useTraces>["filtered"] }) 
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
       {cards.map((c) => (
-        <div
-          key={c.label}
-          className="rounded-lg border border-border bg-background px-5 py-4"
-        >
-          <div className="text-xs text-muted-foreground">{c.label}</div>
-          <div className="mt-1 text-2xl font-bold tabular-nums tracking-[-0.02em] text-foreground">
-            {c.value}
-          </div>
-        </div>
+        <Card key={c.label} size="sm" className="gap-1">
+          <CardContent>
+            <div className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
+              {c.label}
+            </div>
+            <div className="mt-1 text-2xl font-bold tabular-nums tracking-[-0.02em] text-foreground">
+              {c.value}
+            </div>
+          </CardContent>
+        </Card>
       ))}
     </div>
   );

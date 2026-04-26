@@ -23,7 +23,7 @@
 // react-pdf needs its worker registered via a Next-friendly URL so
 // Turbopack can bundle it; we pin to pdfjs-dist's `pdf.worker.min.mjs`.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 // Atom One Light from highlight.js styles — closest match to the
@@ -71,7 +71,13 @@ function escapeReg(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-export function PaperCodeViewer({ trace }: { trace: TraceDoc }) {
+export function PaperCodeViewer({
+  trace,
+  rightSlot,
+}: {
+  trace: TraceDoc;
+  rightSlot?: ReactNode;
+}) {
   const arxivId = trace.arxiv_id ?? "";
   const code = trace.code_str ?? "";
   const claim = trace.claim ?? null;
@@ -86,7 +92,7 @@ export function PaperCodeViewer({ trace }: { trace: TraceDoc }) {
   );
 
   return (
-    <div className="rounded-lg border border-border bg-background">
+    <div className="overflow-hidden rounded-xl bg-card text-card-foreground ring-1 ring-foreground/10">
       <div className="flex flex-col gap-1 border-b border-border px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="text-sm">
           {arxivId ? (
@@ -117,8 +123,52 @@ export function PaperCodeViewer({ trace }: { trace: TraceDoc }) {
           <PaperPane arxivId={arxivId} sectionHint={paperSection} />
         </div>
         <div>
-          <CodePane code={code} buggyLine={buggyLine} />
+          {rightSlot ?? <CodePane code={code} buggyLine={buggyLine} />}
         </div>
+      </div>
+    </div>
+  );
+}
+
+export function PaperPaneStandalone({
+  trace,
+}: {
+  trace: TraceDoc;
+}) {
+  const arxivId = trace.arxiv_id ?? "";
+  const claim = trace.claim ?? null;
+  const paperSection =
+    (claim && (claim as { paper_section?: string | null }).paper_section) ?? null;
+  const fnName = trace.function_name ?? null;
+
+  return (
+    <div className="flex h-full flex-col overflow-hidden rounded-xl bg-card text-card-foreground ring-1 ring-foreground/10">
+      <div className="flex flex-col gap-1 border-b border-border px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="text-sm">
+          {arxivId ? (
+            <a
+              href={`https://arxiv.org/abs/${arxivId}`}
+              target="_blank"
+              rel="noreferrer"
+              className="font-medium text-foreground underline-offset-4 hover:underline"
+            >
+              arXiv:{arxivId}
+            </a>
+          ) : (
+            <span className="text-muted-foreground">no arxiv id</span>
+          )}
+          {paperSection ? (
+            <span className="text-muted-foreground"> · {paperSection}</span>
+          ) : null}
+        </div>
+        {fnName ? (
+          <div className="font-mono text-xs text-muted-foreground">
+            {fnName}()
+          </div>
+        ) : null}
+      </div>
+      <div className="flex-1 min-h-0">
+        <PaperPane arxivId={arxivId} sectionHint={paperSection} />
       </div>
     </div>
   );
