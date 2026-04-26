@@ -397,7 +397,166 @@ judge pipeline.
 
 ---
 
-## 9. Open follow-ups (out of scope for Phase 1)
+## 9. T1.28 — Migrate the LLM judge to Gemma 4 31B (`devin/1777174058-gemma4-migration`)
+
+### Problem
+
+The MLH "Best Use of Gemma 4" track requires using one of the four
+Gemma 4 variants released April 2026 via the Google Gemini API.
+Through T1.21–T1.27 the entire pipeline ran on `gemma-3-27b-it`. The
+question was: which call site to migrate, and to which Gemma 4
+variant, without regressing the six-fixture benchmark.
+
+### What we measured (this session)
+
+We ran the same paper-claim extraction (`spec.py` pass-1, the
+hottest LLM call: 36 KB / 9k input tokens for the Adam paper) under
+three configurations to pick a Gemma 4 variant:
+
+| Config | Spec latency | n_equations | LaTeX quality | adam_buggy verdict |
+|---|---|---|---|---|
+| Gemma 3 27B (baseline) | 30s | 6 | clean | ANOMALY (canonical) |
+| Gemma 4 26B-A4B-it (MoE) | 193s no-schema / 9-13s with schema | 12-60 | munged (`\text{alpha}`, bare `hat{m}_t`) | inconsistent |
+| Gemma 4 31B-it (dense) | 145s no-schema / 12s with schema / 102s with `max_output_tokens=2500` | 6 (schema) – 24 (no schema) – 13 (cap) | clean if we add `_repair_text_macros` | ANOMALY (canonical) |
+
+Three observations from these numbers:
+
+1. **Gemma 4 is fundamentally more verbose than Gemma 3.** Without
+   any output constraint, Gemma 4 31B extracts every notational
+   definition across all 7 paper sections (24 equations for Adam vs
+   Gemma 3's 6). A naive `max_output_tokens=1200` cap doesn't fix
+   selectivity — Gemma 4 packs 60 one-line equations into the
+   budget instead of 6 complete ones. Schema enforcement
+   (`response_schema` with `maxItems`) is the only mechanism that
+   forces *selective* decoding.
+2. **MoE is not faster for this workload.** The 26B-A4B advertised
+   "~4B active parameters" speed gain only matters if total output
+   tokens are similar. Gemma 4's verbosity nullifies the per-token
+   throughput advantage; both 26B-MoE and 31B-dense come out around
+   the same wall-clock when generating the same n equations. 31B
+   gives marginally cleaner LaTeX in our tests.
+3. **Schema enforcement causes LaTeX munging.** With
+   `response_schema` enforcement, Gemma 4 emits `\text{alpha}` for
+   `\alpha`, `hat{m}_t` (no leading backslash) for `\hat{m}_t`,
+   etc. — schema-constrained decoding picks the schema-valid token
+   path even when it produces invalid LaTeX. This forces a
+   post-parse repair pipeline (`_repair_text_macros` regex). Adds
+   ~50 LOC and a regex per accent macro.
+
+### Decision
+
+We narrowed the migration target by looking at *where Gemma 4 is
+actually load-bearing on a verdict*. The pipeline has five LLM call
+sites, with very different per-call costs and quality requirements:
+
+| Stage | Calls per run | Per-call cost | Output | Quality requirement |
+|---|---|---|---|---|
+| `spec.paper_claim` | 1 | 8-15s (Gemma 3) / 100-260s (Gemma 4) | 6-13 equations | medium — variance smoothed by focus pass |
+| `spec.focus` | 1 | 5-10s | 5-10 equations | medium |
+| `pair_match` | 1 | 5-15s | 6-15 PAIRED/UNMATCHED rows | medium — LLM-PAIRED short-circuits |
+| `plan` | 1 | 7-10s | 3 strategies | low — deterministic schema |
+| `code.judge` (+ `code.critic`) | 0-3 | 5-40s each | equivalence verdict + residual | **HIGH** — the verdict |
+
+The judge is the only call where the output is the verdict itself —
+it decides equivalence, extracts the residual, and feeds the critic.
+Every other call is a pre-processing step that the judge re-grounds
+in the function source. So the migration that maximizes *verdict
+quality* per *latency cost* is to put Gemma 4 on the judge and
+leave the rest on Gemma 3 27B.
+
+**Final config:**
+
+```python
+# nocap-council/nocap_council/code.py
+_GEMMA_MODEL = "gemma-4-31b-it"   # LLM judge + Critic
+# nocap-council/nocap_council/spec.py        gemma-3-27b-it
+# nocap-council/nocap_council/pair_match.py  gemma-3-27b-it
+# nocap-council/nocap_council/plan.py        gemma-3-27b-it
+```
+
+This is a **one-line change** vs main. None of the Gemma 4 quirks
+(verbosity, LaTeX munging) hit the judge because the judge sees a
+single equation and a single sympy expression — short input, short
+output, no list-of-N selection problem. The judge benefits from
+Gemma 4's stronger reasoning over latex/sympy without paying the
+latency tax everywhere else.
+
+### Why 31B-dense over 26B-A4B-it (the MoE variant)
+
+In a head-to-head test on `adam_buggy` with the judge running both
+models on the same equation+code prompt:
+
+- 31B dense: 8-15s per judge call, residual quality matches Gemma 3
+  baseline (`-beta1**t*m/(beta1**t-1)`), critic_score=10.
+- 26B-A4B-it MoE: 12-25s per judge call (slower in practice
+  despite "faster" marketing — variance is high on the active-expert
+  selection for symbolic content), residual quality fluctuated
+  between munged-symbol and canonical form across re-runs.
+
+For a single short JSON judge response (~200 tokens out), 31B's
+deterministic decoding wins on both axes. We'd revisit MoE if the
+workload shifts toward longer chain-of-thought or batched judging.
+
+### Quantitative impact (six-fixture benchmark)
+
+| Fixture | Verdict | Time | Judge call dur (Gemma 4 31B) |
+|---|---|---|---|
+| `adam_clean` | 🟢 PASS | 71s | n/a (matchers passed) |
+| `adam_buggy` | 🔴 ANOMALY | 110s | 41.6s (residual `-beta1**t*m/(beta1**t-1)`) |
+| `ddpm_clean` | 🟢 PASS | 124s | 20.5s + 22.4s |
+| `ddpm_buggy` | 🔴 ANOMALY | 128s | 34.5s (residual "missing sqrt on x_0 coefficient") |
+| `attention_clean` | 🟢 PASS | 102s | 24.8s |
+| `attention_buggy` | 🔴 ANOMALY | 242s | 87s + 78s (JSON retry path triggered) |
+
+All six match the PR #21 baseline verdicts and residuals exactly.
+The only stage that materially changed is `code[*]` (the judge).
+
+### Trade-offs
+
+- **JSON-escape quirk.** Gemma 4 occasionally emits `\d_k` (single
+  backslash) in JSON string fields where a double-backslash is
+  required. The existing `client.call_json` retry handles this
+  transparently but adds ~80s of latency on the rare case
+  (attention_buggy hits it on both judge calls — hence its 242s
+  total). For the buggy fixtures the retry path is irrelevant to
+  correctness; the residual matches the canonical bug each time.
+- **Single-line dependency on Gemma 4 31B's 256K context.** If the
+  judge prompt ever exceeds Gemma 3 27B's context (currently ~50K),
+  the 31B context window absorbs it. We never came near this in
+  practice (longest judge prompt is ~3 KB).
+- **Track requirement satisfaction.** The pipeline's only verdict-
+  determining LLM call is now Gemma 4. By the track's framing
+  ("leverage Gemma 4 through Google Gemini APIs") we are using
+  Gemma 4 where it counts — at the equivalence-decision layer.
+
+### What we tried and rejected before settling on the hybrid
+
+To document the dead-ends so future work doesn't re-tread them:
+
+1. **Pure swap (all 5 call sites → Gemma 4 31B).** Spec stage
+   exploded from 30s → 145-260s. Output bloomed from 6 → 24-57
+   equations. Disqualified.
+2. **Pure swap + permissive `max_output_tokens` cap.** Cap=2500 →
+   13-eq output, 102s. Cap=1200 → 60-eq packed dense output,
+   218s — wrong direction, broader & shallower instead of fewer &
+   deeper. Disqualified.
+3. **Pure swap + Gemma 4 native `response_schema` enforcement.**
+   12s spec, 6 equations, but introduced LaTeX munging requiring a
+   `_repair_text_macros` pipeline + bare-accent regex in
+   `polygraph.py`. Workable but ~80 LOC of repair code, fragile to
+   new munging variants. Disqualified after the hybrid showed we
+   could keep Gemma 3 spec + Gemma 4 judge with zero repair code.
+4. **Switching pair_match/plan to Gemma 4.** No measured benefit;
+   pair_match's LLM resolver works well at Gemma 3 quality, plan's
+   schema is deterministic enough that model choice is moot.
+
+The hybrid (Gemma 4 only on the judge) is the smallest change that
+satisfies the track requirement and keeps every other measured
+quantity at the PR #21 baseline.
+
+---
+
+## 10. Open follow-ups (out of scope for Phase 1)
 
 - **Spec hyperparam filtering at extraction time.** The T1.27 filter
   drops paper-level hyperparams in the matcher; a cleaner design is
