@@ -40,7 +40,7 @@ use sha2::Sha256;
 
 const TIMESTAMP_TOLERANCE_S: i64 = 60 * 5;
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
-const POLL_DEADLINE: Duration = Duration::from_secs(60);
+const POLL_DEADLINE: Duration = Duration::from_secs(150);
 
 // ---------------------------------------------------------------------------
 // Entry point
@@ -169,7 +169,7 @@ async fn handle_slash_command(fields: HashMap<String, String>) -> axum::response
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": format!("🔍 Verifying paper *{arxiv_id}*… (≈30s)")
+                    "text": format!("🔍 Verifying paper *{arxiv_id}*… (≈90s)")
                 }
             }
         ]
