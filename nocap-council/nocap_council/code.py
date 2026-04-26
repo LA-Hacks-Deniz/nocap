@@ -137,7 +137,7 @@ if TYPE_CHECKING:
 _PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
 _CRITIC_TXT = _PROMPTS_DIR / "critic.txt"
 
-_GEMMA_MODEL = "gemma-3-27b-it"
+_GEMMA_MODEL = "gemma-4-31b-it"
 _HP_PREFIX = "hyperparam"
 
 
