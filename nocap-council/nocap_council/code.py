@@ -121,6 +121,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import traceback
 from pathlib import Path
@@ -665,11 +666,23 @@ def _run_structural(
     code_extract: dict[str, sp.Expr],
     *,
     filter_hyperparam: bool,
+    function_source: str | None = None,
 ) -> dict[str, Any]:
     kind = "hyperparametric" if filter_hyperparam else "structural"
     ev = _empty_evidence(kind, None)
     raw_mismatches = structural_match.match_structure(paper_extract, code_extract)
     ev["raw_matcher_output"] = {"mismatches": raw_mismatches}
+    # T1.27: drop ``hyperparam_missing_in_code`` rows whose paper-side
+    # symbol does NOT lexically appear in the function-under-verification
+    # source. Papers expose model-level hyperparams (Transformer's
+    # ``N=6`` encoder/decoder stack depth, ``h=8`` heads) that are
+    # genuinely outside the scope of a kernel-level function like
+    # ``scaled_dot_product_attention``. Without this filter the
+    # structural / hyperparametric strategies fire ``equivalent=False``
+    # purely because the paper declared a hyperparam the function
+    # doesn't (and shouldn't) reference.
+    if function_source:
+        raw_mismatches = _filter_irrelevant_hyperparams(raw_mismatches, function_source)
     if filter_hyperparam:
         filtered = [m for m in raw_mismatches if str(m.get("type", "")).startswith(_HP_PREFIX)]
     else:
@@ -678,6 +691,32 @@ def _run_structural(
     ev["equivalent"] = len(filtered) == 0
     ev["method_used"] = None
     return ev
+
+
+def _filter_irrelevant_hyperparams(
+    mismatches: list[dict[str, Any]],
+    function_source: str,
+) -> list[dict[str, Any]]:
+    """Drop ``hyperparam_missing_in_code`` rows whose symbol isn't in the function.
+
+    A hyperparam declared at the paper / model level (e.g. ``N=6``,
+    ``h=8`` for Transformer) is irrelevant to a function whose source
+    never references it (e.g. ``scaled_dot_product_attention`` only
+    cares about ``d_k``). Lexical word-boundary check.
+    """
+    out: list[dict[str, Any]] = []
+    for m in mismatches:
+        if str(m.get("type", "")) != "hyperparam_missing_in_code":
+            out.append(m)
+            continue
+        loc = m.get("location") or {}
+        sym = (loc.get("paper_hyperparam_symbol") or "").strip()
+        if not sym:
+            out.append(m)
+            continue
+        if re.search(rf"\b{re.escape(sym)}\b", function_source):
+            out.append(m)
+    return out
 
 
 def _format_critic_prompt(
@@ -833,9 +872,19 @@ def run_strategy(
                 strategy_idx=strategy_idx,
             )
         elif kind == "structural":
-            evidence = _run_structural(paper_extract, code_extract, filter_hyperparam=False)
+            evidence = _run_structural(
+                paper_extract,
+                code_extract,
+                filter_hyperparam=False,
+                function_source=function_source,
+            )
         elif kind == "hyperparametric":
-            evidence = _run_structural(paper_extract, code_extract, filter_hyperparam=True)
+            evidence = _run_structural(
+                paper_extract,
+                code_extract,
+                filter_hyperparam=True,
+                function_source=function_source,
+            )
         else:
             raise ValueError(f"unknown strategy.kind={kind!r}")
     except Exception as exc:

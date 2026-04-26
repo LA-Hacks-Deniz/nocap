@@ -550,6 +550,7 @@ def _strategy_evidence(
                 continue
         for i, raw_eq in enumerate(equations):
             entry = pair_by_index.get(i)
+            pair_target: str | None = None
             if entry is not None:
                 verdict = entry.get("verdict")
                 if verdict == "GATED":
@@ -565,10 +566,10 @@ def _strategy_evidence(
                     )
                     continue
                 if verdict == "UNMATCHED":
-                    # T1.26 pair-match v2: any UNMATCHED row at this
-                    # point either had no code-side LHS counterpart
-                    # AND lost (or was never in) the return-value
-                    # Jaccard contest. Skip cleanly.
+                    # T1.26 pair-match v3: any UNMATCHED row had no
+                    # code-side LHS counterpart and the LLM resolver
+                    # couldn't bridge it to the function's return /
+                    # init / local. Skip cleanly.
                     skipped.append(
                         (
                             i,
@@ -577,24 +578,38 @@ def _strategy_evidence(
                         )
                     )
                     continue
+                if verdict in ("PAIRED", "PAIRED_RETURN", "PAIRED_INIT", "PAIRED_LOCAL"):
+                    # T1.27: trust the LLM resolver. The pair-match
+                    # ``code_target`` is the canonical place to compare
+                    # the paper RHS against — _return for return-value
+                    # functions (DDPM q_sample), the precomputed
+                    # ``__init__`` attribute name for coefficient rows
+                    # (DDPM ``\tilde\beta_t`` ↔ ``posterior_variance``),
+                    # or the local LHS for in-body computations.
+                    # Bypass the i>0/_return heuristic skip below.
+                    raw_target = entry.get("code_target") or ""
+                    pair_target = raw_target.strip() or None
             eq = _normalize_equation(raw_eq)
-            target = _heuristic_target_var(eq, code_env)
-            # T1.24: ``_heuristic_target_var`` already has a T1.22-era
-            # ``_return`` fallback that fires whenever the LHS symbol
-            # isn't in ``code_env`` — that bridges paper-side function
-            # definitions like ``Attention(Q,K,V) = ...`` to the code's
-            # return value. Spec equation-ranking (T1.24) makes that
-            # fallback safe and useful for the FIRST equation (the
-            # function-defining one), but it is structurally bogus for
-            # intermediate / notational-definition equations at i > 0
-            # whose LHS (e.g. ``\bar{\alpha}_t = \prod_s \alpha_s``)
-            # describes a different quantity than the function's
-            # return. Force-skip those: comparing ``_return`` against
-            # such an equation always yields a confidently-wrong
-            # ``equivalent=False`` from the matcher and judge.
-            if i > 0 and target == "_return":
-                skipped.append((i, target, "non-leading_return_fallback"))
-                continue
+            if pair_target is not None:
+                target = pair_target
+            else:
+                target = _heuristic_target_var(eq, code_env)
+                # T1.24: ``_heuristic_target_var`` already has a T1.22-era
+                # ``_return`` fallback that fires whenever the LHS symbol
+                # isn't in ``code_env`` — that bridges paper-side function
+                # definitions like ``Attention(Q,K,V) = ...`` to the code's
+                # return value. Spec equation-ranking (T1.24) makes that
+                # fallback safe and useful for the FIRST equation (the
+                # function-defining one), but it is structurally bogus for
+                # intermediate / notational-definition equations at i > 0
+                # whose LHS (e.g. ``\bar{\alpha}_t = \prod_s \alpha_s``)
+                # describes a different quantity than the function's
+                # return. Force-skip those: comparing ``_return`` against
+                # such an equation always yields a confidently-wrong
+                # ``equivalent=False`` from the matcher and judge.
+                if i > 0 and target == "_return":
+                    skipped.append((i, target, "non-leading_return_fallback"))
+                    continue
             if _is_self_referential(eq, target):
                 # Update-rule equation (LHS appears in RHS); we have no
                 # temporal indexing for ``code_env`` so the matcher can't
@@ -648,7 +663,15 @@ def _strategy_evidence(
     # cross-section mismatches before the Critic fires, so AdaMax-style
     # sibling sections in the Adam paper don't false-flag a clean
     # implementation (issue #3).
-    return coder.run_strategy(strategy, paper, code_env, claim_section=claim.get("paper_section"))
+    return coder.run_strategy(
+        strategy,
+        paper,
+        code_env,
+        claim_section=claim.get("paper_section"),
+        function_source=function_source,
+        function_name=function_name,
+        strategy_idx=strategy_idx,
+    )
 
 
 def _short_residual(residual: Any) -> str | None:
@@ -802,6 +825,10 @@ def verify(
     )
 
     # Stage 4: code_extract (resolve fn_name + walk AST)
+    # T1.27: defer ``function_source`` re-extraction to AFTER fn_name
+    # is resolved so the structural / hyperparametric strategies (and
+    # the judge prompt) get the canonical source even when the user
+    # didn't pass ``--function`` on the CLI.
     s0 = time.perf_counter()
     try:
         fn_name = _resolve_function_name(code_str, claim.get("claimed_function"), function_name)
@@ -832,6 +859,12 @@ def verify(
             "env_keys": sorted(k for k in code_env.keys() if not k.startswith("_"))[:10],
         },
     )
+    # T1.27: re-extract function_source against the resolved fn_name so
+    # downstream strategies can lexically inspect the function body.
+    if fn_name:
+        resolved_source = _extract_function_source(code_str, fn_name)
+        if resolved_source:
+            function_source = resolved_source
 
     # Stage 4b: code_claim (T1.25 v3 Stage 6 — symmetric structured
     # extraction of the code's intent so the matcher can pair-match

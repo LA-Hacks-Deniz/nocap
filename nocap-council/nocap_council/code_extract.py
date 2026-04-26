@@ -65,7 +65,21 @@ import sympy as sp
 
 __all__ = ["CodeToSympy", "code_to_sympy"]
 
-_KNOWN_MODULES: frozenset[str] = frozenset({"np", "numpy", "torch", "math", "sp", "sympy"})
+_KNOWN_MODULES: frozenset[str] = frozenset(
+    {
+        "np", "numpy",
+        "torch",
+        "math",
+        "sp", "sympy",
+        # Common ML import aliases. ``import torch.nn.functional as F``
+        # and ``import torch.nn as nn`` are pervasive; treat their
+        # member calls (``F.softmax(scores, dim=-1)``,
+        # ``nn.Linear(...)``) the same way as ``torch.softmax(...)`` —
+        # the module name is dropped, only the function name survives.
+        "F",
+        "nn",
+    }
+)
 
 
 def _sigmoid(x: sp.Expr) -> sp.Expr:
@@ -241,17 +255,38 @@ class CodeToSympy(ast.NodeVisitor):
         return sp.Tuple(*[self.visit(e) for e in node.elts])
 
     def visit_Call(self, node: ast.Call) -> sp.Expr:
-        # Strip a known module prefix, then look up the callable name.
-        # Method-style calls on arbitrary objects (``foo.bar(x)``) become
-        # an opaque ``Function("bar")(x)`` — the receiver is dropped on
-        # purpose because we don't want to compare object identity.
+        # Resolve the callable name and decide whether to preserve the
+        # receiver as the first positional argument. Three cases:
+        #
+        # 1. ``module.func(args)`` where ``module`` is a known module
+        #    alias (``np``, ``torch``, ``math``, ``F``, ``nn``, ...) —
+        #    receiver is dropped, ``func(args)``.
+        # 2. ``receiver.method(args)`` where ``receiver`` is anything
+        #    else (a function parameter, a previously-bound name, an
+        #    expression like ``key.transpose(-2,-1)``) — receiver is
+        #    PROMOTED to the first positional argument:
+        #    ``method(receiver, args)``. This is what allows the
+        #    ``scores = scores.masked_fill(mask == 0, -inf)``
+        #    pattern in attention to keep the prior ``scores``
+        #    binding alive (so the chain ``query @ key.T / sqrt(d_k)``
+        #    is not lost across the conditional masking step).
+        # 3. ``func(args)`` — bare call, unchanged.
+        receiver: sp.Expr | None = None
         if isinstance(node.func, ast.Attribute):
             fname = node.func.attr
+            recv_node = node.func.value
+            is_known_module = (
+                isinstance(recv_node, ast.Name) and recv_node.id in _KNOWN_MODULES
+            )
+            if not is_known_module:
+                receiver = self.visit(recv_node)
         elif isinstance(node.func, ast.Name):
             fname = node.func.id
         else:
             fname = ast.unparse(node.func).replace(".", "_")
         args = [self.visit(a) for a in node.args]
+        if receiver is not None:
+            args = [receiver, *args]
         # kwargs are silently dropped; see module docstring.
         fn = _MATH_FUNCS.get(fname)
         if fn is None:
