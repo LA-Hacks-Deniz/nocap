@@ -74,6 +74,7 @@ pub async fn list_traces(Query(q): Query<ListQuery>) -> Result<Json<Vec<TraceSum
         .skip(Some(offset as u64))
         .limit(Some(limit))
         .projection(doc! {
+            "_id": 1,
             "trace_id": 1,
             "arxiv_id": 1,
             "function_name": 1,
@@ -105,7 +106,13 @@ pub async fn list_traces(Query(q): Query<ListQuery>) -> Result<Json<Vec<TraceSum
 
 fn summary_from_doc(d: &Document) -> TraceSummary {
     TraceSummary {
-        trace_id: d.get_str("trace_id").ok().map(str::to_string),
+        // Old traces (pre-T2.10) lack a top-level `trace_id`; fall back to
+        // `_id` (ObjectId hex) so the dashboard can still link to them.
+        trace_id: d
+            .get_str("trace_id")
+            .ok()
+            .map(str::to_string)
+            .or_else(|| d.get_object_id("_id").ok().map(|o| o.to_hex())),
         arxiv_id: d.get_str("arxiv_id").ok().map(str::to_string),
         function_name: d.get_str("function_name").ok().map(str::to_string),
         verdict: d.get_str("verdict").ok().map(str::to_string),
@@ -130,11 +137,21 @@ pub async fn get_trace(Path(trace_id): Path<String>) -> Result<Json<Value>, ApiE
     tracing::info!(trace_id = %trace_id, "get_trace");
 
     let coll = mongo_collection().await?;
-    let doc = coll
+    // Try the new (T2.10+) `trace_id` field first; fall back to `_id` so
+    // the dashboard can still surface pre-T2.10 traces by ObjectId hex.
+    let mut found = coll
         .find_one(doc! { "trace_id": &trace_id }, None)
         .await
-        .map_err(|e| ApiError::internal(format!("mongo find_one: {e}")))?
-        .ok_or_else(|| ApiError::not_found("trace not found".to_string()))?;
+        .map_err(|e| ApiError::internal(format!("mongo find_one: {e}")))?;
+    if found.is_none() {
+        if let Ok(oid) = mongodb::bson::oid::ObjectId::parse_str(&trace_id) {
+            found = coll
+                .find_one(doc! { "_id": oid }, None)
+                .await
+                .map_err(|e| ApiError::internal(format!("mongo find_one(_id): {e}")))?;
+        }
+    }
+    let doc = found.ok_or_else(|| ApiError::not_found("trace not found".to_string()))?;
 
     let mut v = serde_json::to_value(&doc)
         .map_err(|e| ApiError::internal(format!("bson→json: {e}")))?;
