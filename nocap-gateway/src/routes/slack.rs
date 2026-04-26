@@ -508,9 +508,9 @@ fn render_verdict_blocks(trace_id: &str, verdict: &Value) -> Value {
         "elements": [
             {
                 "type": "button",
-                "text": {"type": "plain_text", "text": "View Issue"},
+                "text": {"type": "plain_text", "text": "Inspect in Dashboard"},
                 "action_id": "view_issue",
-                "url": format!("https://nocap.wiki/trace/{}", trace_id),
+                "url": format!("https://nocap.wiki/dashboard?id={}", trace_id),
                 "value": trace_id
             },
             {
