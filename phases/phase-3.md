@@ -318,7 +318,7 @@ Phase 3 ships when a judge can hit `nocap.wiki` from their phone and watch a liv
 
 ### T3.25 — `PaperCodeViewer.tsx` component
 
-- [~] **@devin** — 2026-04-25 23:47
+- [x] **@devin**
 - **Deliverable**: `nocap-frontend/src/components/trace/PaperCodeViewer.tsx`. Side-by-side layout (50/50 desktop, stacked mobile):
   - Left pane: react-pdf renders the paper PDF (fetched from `api.nocap.wiki/api/papers/<arxiv_id>/pdf`). User can scroll, zoom basic. Highlight the equation that caused the anomaly (best-effort: scroll to the section name from `claim.paper_section`).
   - Right pane: react-syntax-highlighter renders `code_str` with Python syntax highlighting. Highlight the line that contains the buggy assignment (use the `code_line` from the verdict if available; otherwise the line containing the target_var name).
@@ -330,7 +330,7 @@ Phase 3 ships when a judge can hit `nocap.wiki` from their phone and watch a liv
 
 ### T3.26 — `TimingChart.tsx` component
 
-- [~] **@devin** — 2026-04-25 23:47
+- [x] **@devin**
 - **Deliverable**: `nocap-frontend/src/components/trace/TimingChart.tsx`. Horizontal bar chart of per-stage timings using `recharts`. Each bar is a stage (paper_extract / spec / plan / code_extract / code[*] / polygraph), labeled with stage name + ms. Total wall clock at the bottom. Grayscale only (no color); use weight + size for hierarchy per Design System.
 - **Acceptance**: passing a trace doc with `evidences[].method_used` + per-stage ms field renders the chart correctly. All 7-9 stages visible. No color accents.
 - **Files touched**: `nocap-frontend/src/components/trace/TimingChart.tsx`, `package.json` (recharts).
@@ -346,7 +346,7 @@ Phase 3 ships when a judge can hit `nocap.wiki` from their phone and watch a liv
 
 ### T3.28 — Dashboard page
 
-- [~] **@devin** — 2026-04-25 23:47
+- [x] **@devin**
 - **Deliverable**: `nocap-frontend/src/app/dashboard/page.tsx`. Full page:
   - Header: nav (cap-emoji wordmark + "Dashboard" / "GitHub" / "Devpost"), section title "All verifications"
   - Stats row: 4 cards — Total checks, Anomalies caught, Pass rate, Avg wall clock — pulled from the trace list
@@ -359,7 +359,7 @@ Phase 3 ships when a judge can hit `nocap.wiki` from their phone and watch a liv
 
 ### T3.29 — `TraceCard.tsx` component
 
-- [~] **@devin** — 2026-04-25 23:47
+- [x] **@devin**
 - **Deliverable**: `nocap-frontend/src/components/dashboard/TraceCard.tsx`. Single card UI:
   - Top: verdict icon (🟢 / 🔴 / 🟡) + verdict text in Inter Bold, confidence on the right (Bold for >0.8 per Design System)
   - Middle: paper title (or arxiv ID + paper_section), function name in mono
@@ -372,7 +372,7 @@ Phase 3 ships when a judge can hit `nocap.wiki` from their phone and watch a liv
 
 ### T3.30 — Trace detail page
 
-- [~] **@devin** — 2026-04-25 23:47
+- [x] **@devin**
 - **Deliverable**: `nocap-frontend/src/app/trace/[id]/page.tsx`. Composes:
   - Header: verdict icon + headline ("Anomaly detected" / "Implementation matches paper" / "Inconclusive") + confidence
   - Inline summary: arxiv link + paper section + function name + trace_id (with copy button) + replay button
@@ -387,7 +387,7 @@ Phase 3 ships when a judge can hit `nocap.wiki` from their phone and watch a liv
 
 ### T3.31 — API client (TanStack Query)
 
-- [~] **@devin** — 2026-04-25 23:47
+- [x] **@devin**
 - **Deliverable**: `nocap-frontend/src/lib/api.ts` with TanStack Query hooks:
   - `useTraces(filters)` → `GET /api/traces` with server-side pagination
   - `useTrace(traceId)` → `GET /api/traces/:trace_id` with cache key
@@ -400,7 +400,7 @@ Phase 3 ships when a judge can hit `nocap.wiki` from their phone and watch a liv
 
 ### T3.32 — Branding cleanup: drop `~`, lock cap-emoji wordmark
 
-- [~] **@devin** — 2026-04-25 23:47
+- [x] **@devin**
 - **Deliverable**: 
   1. Find and delete every reference to the `~` (tilde) logo across `nocap-frontend/` — nav bar, favicon SVG, hero centerpiece, etc. Replace with the cap-emoji wordmark "NoCap🧢" (cap overlapping the `p`) consistently.
   2. Update `../../30 - Product/Design System.md` "Logo" section: replace `~` rules with cap-emoji wordmark rules. Document size/weight/color tokens for nav/hero/favicon.
